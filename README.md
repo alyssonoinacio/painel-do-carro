@@ -3,7 +3,7 @@
 Launcher Android para usar um tablet como central do carro, com visual de HUD e um assistente de voz.
 
 - **Reator central**: toque e fale. Comandos do carro funcionam sem internet: "navegar para o shopping",
-  "aumenta o volume", "próxima", "pausa", "ligar para 11 99999-9999", "abrir Waze", "que horas são", "bateria".
+  "aumenta o volume", "tocar Legião Urbana no YouTube", "próxima", "pausa", "ligar para 11 99999-9999", "abrir Waze", "que horas são", "bateria".
 - **Sem tocar**: em Ajustes, ligue "Acordar ao ouvir “Jarvis”". Diga "Jarvis" (ou "Jarvis, navegar para casa"). Depois de
   uma resposta de conversa ele escuta mais uma vez, sem precisar repetir "Jarvis".
 - **Voz**: voz do Gemini pelo servidor (`/v1/audio/speech`), com tom calmo e formal; sem internet, usa a voz do Android.

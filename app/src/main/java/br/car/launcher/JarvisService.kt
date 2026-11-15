@@ -36,6 +36,28 @@ class JarvisService : Service() {
         var frase: String? = null; private set
         var fala: String? = null; private set
 
+        /** Últimos eventos da escuta, mostrados em Ajustes > Diagnóstico. */
+        val diag = ArrayDeque<String>()
+        @Volatile var rodando = false; private set
+        fun log(m: String) = synchronized(diag) {
+            diag.addFirst(java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + "  " + m)
+            while (diag.size > 25) diag.removeLast()
+        }
+        fun nomeErro(e: Int) = when (e) {
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "rede lenta"
+            SpeechRecognizer.ERROR_NETWORK -> "sem rede"
+            SpeechRecognizer.ERROR_AUDIO -> "microfone ocupado ou com falha"
+            SpeechRecognizer.ERROR_SERVER -> "servidor de voz do Google"
+            SpeechRecognizer.ERROR_CLIENT -> "cliente"
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "silêncio"
+            SpeechRecognizer.ERROR_NO_MATCH -> "não entendi"
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "reconhecedor ocupado"
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "sem permissão do microfone"
+            12 -> "idioma não suportado"
+            13 -> "idioma pt-BR indisponível"
+            else -> "código $e"
+        }
+
         fun enviar(c: Context, acao: String) {
             val i = Intent(c, JarvisService::class.java).setAction(acao)
             try { if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i) else c.startService(i) } catch (e: Exception) {}
@@ -56,6 +78,7 @@ class JarvisService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        rodando = true; log("serviço iniciado")
         jarvis = Jarvis(this); voz = Voz(this)
         if (Build.VERSION.SDK_INT >= 26) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
@@ -78,7 +101,8 @@ class JarvisService : Service() {
             if (Build.VERSION.SDK_INT >= 29) startForeground(1, notificacao(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             else startForeground(1, notificacao())
         } catch (e: Exception) { stopSelf(); return START_NOT_STICKY }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+        if (!SpeechRecognizer.isRecognitionAvailable(this) && !noAparelho()) {
+            log("nenhum reconhecimento de voz instalado")
             publicar(Estado.PARADO, null, "Este tablet não tem reconhecimento de voz. Instale o app Google pela Play Store.")
             encerrar(); return START_NOT_STICKY
         }
@@ -91,17 +115,24 @@ class JarvisService : Service() {
     }
 
     // ---------- reconhecimento ----------
-    private fun recognizer(): SpeechRecognizer =
-        rec ?: SpeechRecognizer.createSpeechRecognizer(this).also { it.setRecognitionListener(escuta); rec = it }
+    /** Android 12+: reconhecedor que roda no próprio aparelho, usado quando não há o do Google. */
+    private fun noAparelho() = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+
+    private fun recognizer(): SpeechRecognizer = rec ?: (
+        if (!SpeechRecognizer.isRecognitionAvailable(this) && noAparelho()) {
+            log("usando o reconhecedor do próprio aparelho")
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+        } else SpeechRecognizer.createSpeechRecognizer(this)
+    ).also { it.setRecognitionListener(escuta); rec = it }
 
     private fun pedido(espera: Boolean) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
         .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
         .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-        .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, espera) // economiza dados na escuta contínua, se houver pacote offline
         .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
 
     private fun esperar() {
+        if (modo != Modo.ESPERA) log("esperando a palavra “Jarvis”")
         modo = Modo.ESPERA
         silenciar(true) // o bipe de cada reinício da escuta não pode tocar a cada poucos segundos
         publicar(Estado.AGUARDANDO, null, null)
@@ -109,6 +140,7 @@ class JarvisService : Service() {
     }
 
     private fun ouvirComando() {
+        log("ouvindo o pedido")
         voz.parar()
         modo = Modo.COMANDO
         silenciar(false) // aqui o bipe é útil: avisa que pode falar
@@ -125,11 +157,13 @@ class JarvisService : Service() {
         override fun onResults(b: Bundle?) {
             falhas = 0
             val textos = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+            log("ouvi: “" + (textos.firstOrNull() ?: "") + "”")
             when (modo) {
                 Modo.ESPERA -> {
                     val t = textos.firstOrNull { PALAVRA.containsMatchIn(it.semAcento()) }
                     if (t == null) { reiniciarDepois(150); return }
                     val resto = depoisDaPalavra(t)
+                    log("palavra “Jarvis” reconhecida")
                     if (resto.length < 2) acordou() else processar(resto)
                 }
                 Modo.COMANDO -> {
@@ -141,6 +175,7 @@ class JarvisService : Service() {
         }
 
         override fun onError(erro: Int) {
+            if (erro != SpeechRecognizer.ERROR_NO_MATCH && erro != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) log("erro: " + nomeErro(erro))
             when (modo) {
                 Modo.ESPERA -> when (erro) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> reiniciarDepois(150)
@@ -151,7 +186,11 @@ class JarvisService : Service() {
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER -> {
                         falhas++; reiniciarDepois(minOf(60_000L, 5_000L * falhas)) // sem internet: tenta de novo, cada vez mais devagar
                     }
-                    else -> { rec?.destroy(); rec = null; reiniciarDepois(1000) }
+                    else -> {
+                        falhas++
+                        if (falhas == 5) publicar(Estado.AGUARDANDO, null, "A escuta do “Jarvis” está com problema: ${nomeErro(erro)}. Veja Ajustes, Diagnóstico.")
+                        rec?.destroy(); rec = null; reiniciarDepois(minOf(30_000L, 1_000L * falhas))
+                    }
                 }
                 Modo.COMANDO -> voltar()
                 else -> {}
@@ -187,8 +226,12 @@ class JarvisService : Service() {
         publicar(Estado.PENSANDO, texto, null)
         jarvis.responder(texto) { r ->
             publicar(Estado.FALANDO, texto, r.fala)
-            r.acao?.let { try { it() } catch (e: Exception) {} }
-            voz.falar(r.fala) { if (r.conversa) ouvirComando() else voltar() }
+            val agir = { r.acao?.let { try { it() } catch (e: Exception) { log("falha ao executar: ${e.message}") } } }
+            if (!r.agirDepois) agir()
+            voz.falar(r.fala) {
+                if (r.agirDepois) agir()
+                if (r.conversa) ouvirComando() else voltar()
+            }
         }
     }
 
@@ -226,6 +269,7 @@ class JarvisService : Service() {
     }
 
     override fun onDestroy() {
+        rodando = false; log("serviço parado")
         modo = Modo.DESLIGADO
         h.removeCallbacksAndMessages(null)
         silenciar(false)

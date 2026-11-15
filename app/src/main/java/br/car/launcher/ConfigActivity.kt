@@ -29,6 +29,11 @@ class ConfigActivity : Activity() {
     private lateinit var chave: EditText
     private lateinit var modelo: EditText
     private var voz: Voz? = null
+    private lateinit var diag: TextView
+    private val relogio = android.os.Handler(android.os.Looper.getMainLooper())
+    private val atualizarDiag = object : Runnable {
+        override fun run() { diag.text = diagnostico(); relogio.postDelayed(this, 2000) }
+    }
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -98,6 +103,11 @@ class ConfigActivity : Activity() {
         status = texto("", 17f, Hud.ACO, false).apply { setPadding(0, dp(12), 0, dp(4)) }
         col.addView(status)
 
+        // --- diagnóstico da escuta
+        secao(col, "Diagnóstico")
+        diag = texto("", 15f, Hud.GELO, false).apply { typeface = android.graphics.Typeface.MONOSPACE; setLineSpacing(0f, 1.2f) }
+        col.addView(diag)
+
         col.addView(botao("Abrir ajustes do Android") { startActivity(Intent(Settings.ACTION_SETTINGS)) },
             LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(20) })
         setContentView(ScrollView(this).apply { setBackgroundColor(Hud.ABISMO); addView(col) })
@@ -109,7 +119,29 @@ class ConfigActivity : Activity() {
         else { status.text = "Sem o microfone o Jarvis não ouve. Permita para usar a ativação por voz."; status.setTextColor(Hud.AMBAR) }
     }
 
-    override fun onPause() { super.onPause(); salvar() }
+    override fun onResume() { super.onResume(); relogio.post(atualizarDiag) }
+    override fun onPause() { super.onPause(); salvar(); relogio.removeCallbacks(atualizarDiag) }
+
+    /** O que um print desta tela precisa mostrar para descobrir por que o "Jarvis" não responde. */
+    private fun diagnostico(): String {
+        val mic = Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val google = android.speech.SpeechRecognizer.isRecognitionAvailable(this)
+        val local = Build.VERSION.SDK_INT >= 31 && android.speech.SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+        val servico = try { Settings.Secure.getString(contentResolver, "voice_recognition_service") } catch (e: Exception) { null }
+        val sobrepor = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)
+        val linhas = mutableListOf(
+            "Microfone: " + (if (mic) "permitido" else "NEGADO"),
+            "Reconhecimento: " + when { google -> "disponível"; local -> "só o do aparelho"; else -> "NENHUM instalado" },
+            "Serviço de voz: " + (servico?.substringBefore('/') ?: "não informado"),
+            "Acordar com “Jarvis”: " + (if (hotword()) "ligado" else "desligado"),
+            "Escuta rodando: " + (if (JarvisService.rodando) "sim" else "não"),
+            "Abrir apps por voz: " + (if (sobrepor) "permitido" else "não permitido"),
+            "Versão: " + packageManager.getPackageInfo(packageName, 0).versionName,
+            "", "Últimos eventos:")
+        synchronized(JarvisService.diag) { linhas.addAll(JarvisService.diag.take(12)) }
+        if (JarvisService.diag.isEmpty()) linhas.add("(nenhum ainda)")
+        return linhas.joinToString("\n")
+    }
     override fun onDestroy() { voz?.desligar(); super.onDestroy() }
 
     private fun salvar() = prefs().edit().putString("srv_url", url.text.toString().trim())

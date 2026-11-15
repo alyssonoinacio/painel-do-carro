@@ -23,7 +23,7 @@ import kotlin.concurrent.thread
  * da OpenAI — o OpenJarvis (`jarvis serve`) expõe exatamente isso em /v1/chat/completions.
  */
 class Jarvis(private val c: Context) {
-    class Resposta(val fala: String, val conversa: Boolean = false, val acao: (() -> Unit)? = null)
+    class Resposta(val fala: String, val conversa: Boolean = false, val agirDepois: Boolean = false, val acao: (() -> Unit)? = null)
 
     private val historico = ArrayList<JSONObject>()
     private val main = Handler(Looper.getMainLooper())
@@ -70,8 +70,7 @@ class Jarvis(private val c: Context) {
         if (Regex("^(proxima|pula|pular|avanca)").containsMatchIn(f)) return Resposta("Próxima.") { tecla(audio, KeyEvent.KEYCODE_MEDIA_NEXT) }
         if (Regex("^(anterior|volta a musica|musica anterior)").containsMatchIn(f)) return Resposta("Voltando.") { tecla(audio, KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
         if (Regex("^(continua|continuar|play|despausa)").containsMatchIn(f)) return Resposta("Tocando.") { tecla(audio, KeyEvent.KEYCODE_MEDIA_PLAY) }
-        if (Regex("^(toca|tocar|toque|bota|coloca|abre a|abrir a) (uma )?musica").containsMatchIn(f) || f == "musica")
-            return Resposta("Abrindo a música.") { abrirMusica() }
+        tocar(bruta)?.let { return it }
 
         Regex("^(?:ligar|liga|ligue|telefonar)\\s+(?:para|pra|pro)\\s+(.+)$").find(f)?.let { m ->
             val num = m.groupValues[1].filter { it.isDigit() }
@@ -99,6 +98,66 @@ class Jarvis(private val c: Context) {
             else Resposta("Não encontrei o app $alvo neste tablet.")
         }
         return null
+    }
+
+    /**
+     * "tocar Legião Urbana no YouTube", "toca Coldplay", "coloca Anitta no Spotify".
+     * Sem plataforma, vai para o YouTube. "tocar música" sem nome abre o app de música.
+     */
+    private fun tocar(bruta: String): Resposta? {
+        val orig = bruta.trim().split(Regex("\\s+")).map { it.trim(',', '.', '!', '?') }.filter { it.isNotEmpty() }.toMutableList()
+        if (orig.firstOrNull()?.semAcento() == "jarvis") orig.removeAt(0)
+        val norm = orig.map { it.semAcento() }
+        if (norm.isEmpty() || norm[0] !in setOf("toca", "tocar", "toque", "bota", "botar", "coloca", "colocar", "poe", "por", "play", "reproduz", "reproduzir"))
+            return null
+        var fimQ = norm.size
+        var onde = "youtube"
+        val cauda = norm.drop(1).joinToString(" ")
+        when {
+            Regex("\\b(no|do|pelo|na) (youtube|you tube|yt)$").containsMatchIn(cauda) ->
+                fimQ -= if (cauda.endsWith("you tube")) 3 else 2
+            Regex("\\b(no|do|pelo|na) (youtube music|you tube music)$").containsMatchIn(cauda) -> {
+                onde = "ytmusic"; fimQ -= if (cauda.endsWith("you tube music")) 4 else 3 }
+            Regex("\\b(no|do|pelo|na) spotify$").containsMatchIn(cauda) -> { onde = "spotify"; fimQ -= 2 }
+        }
+        val q = orig.subList(1, maxOf(1, fimQ)).joinToString(" ")
+        val qn = q.semAcento()
+        if (qn.isBlank() || qn in setOf("musica", "uma musica", "a musica", "um som", "som", "algo", "alguma coisa"))
+            return if (onde == "youtube" && fimQ < norm.size) Resposta("Abrindo o YouTube.") { c.startPkg("com.google.android.youtube") }
+                   else Resposta("Abrindo a música.") { abrirMusica() }
+        return when (onde) {
+            "spotify" -> Resposta("Tocando $q no Spotify.", agirDepois = true) {
+                abrirUri("spotify:search:" + Uri.encode(q), "com.spotify.music") }
+            "ytmusic" -> Resposta("Tocando $q no YouTube Music.", agirDepois = true) {
+                abrirUri("https://music.youtube.com/search?q=" + Uri.encode(q), "com.google.android.apps.youtube.music") }
+            else -> Resposta("Tocando $q no YouTube.", agirDepois = true) { youtube(q) }
+        }
+    }
+
+    /** Procura no YouTube e abre o primeiro vídeo; sem achar o vídeo, abre a busca. */
+    private fun youtube(q: String) {
+        thread {
+            val id = try {
+                val con = URL("https://www.youtube.com/results?search_query=" + Uri.encode(q)).openConnection() as HttpURLConnection
+                con.connectTimeout = 8000; con.readTimeout = 10000
+                con.setRequestProperty("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36")
+                con.setRequestProperty("Accept-Language", "pt-BR,pt;q=0.9")
+                val html = con.inputStream.bufferedReader().use { it.readText() }
+                Regex("\"videoId\":\"([\\w-]{11})\"").find(html)?.groupValues?.get(1)
+            } catch (e: Exception) { null }
+            main.post {
+                if (id != null) abrirUri("https://www.youtube.com/watch?v=$id", "com.google.android.youtube")
+                else abrirUri("https://www.youtube.com/results?search_query=" + Uri.encode(q), "com.google.android.youtube")
+            }
+        }
+    }
+
+    private fun abrirUri(uri: String, pacote: String) {
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (c.instalado(pacote)) i.setPackage(pacote)
+        try { c.startActivity(i) } catch (e: Exception) {
+            try { c.startActivity(i.setPackage(null)) } catch (e2: Exception) {}
+        }
     }
 
     private fun tecla(a: AudioManager, k: Int) {
