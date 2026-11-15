@@ -65,6 +65,7 @@ class MainActivity : Activity() {
         window.statusBarColor = Hud.ABISMO; window.navigationBarColor = Hud.ABISMO
         jarvis = Jarvis(this)
         montar()
+        Relatorio.marco(this, "tela criada")
         App.ultimoErro(this)?.let {
             falaTxt.text = "Na última vez o app fechou por um erro. Se repetir, mande uma foto de Ajustes, Diagnóstico."
         }
@@ -203,26 +204,49 @@ class MainActivity : Activity() {
         modAtualizar.destacar(v != null)
     }
 
+    // Cada recurso da tela entra protegido: um erro num deles é enviado ao suporte e o resto da tela abre.
+    private var bateriaRegistrada = false
+    private var somRegistrado = false
+
     override fun onResume() {
         super.onResume()
-        registerReceiver(batt, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        montarDoca()
-        telemetria.visibility = if (Obd.configurado(this)) View.VISIBLE else View.GONE
-        Obd.ouvintes.add(obdOuvinte); Obd.usar(this, "tela")
-        if (Build.VERSION.SDK_INT >= 23) (getSystemService(AUDIO_SERVICE) as android.media.AudioManager)
-            .registerAudioDeviceCallback(somCallback as android.media.AudioDeviceCallback, null)
-        mostrarSom()
-        JarvisService.ouvinte = { e, f, fl -> atualizar(e, f, fl) }
-        atualizar(JarvisService.estado, JarvisService.frase, JarvisService.fala)
-        if (hotword() && temMic()) JarvisService.enviar(this, JarvisService.INICIAR)
-        if ((!temMic() || !Obd.permitido(this)) && !pediuPermissoes) { pediuPermissoes = true; pedirMic() }
-        Updater.verificar(this, false) { marcarAtualizacao() }
+        Relatorio.seguro(this, "bateria") { registerReceiver(batt, IntentFilter(Intent.ACTION_BATTERY_CHANGED)); bateriaRegistrada = true }
+        Relatorio.seguro(this, "doca") { montarDoca() }
+        Relatorio.seguro(this, "obd") {
+            telemetria.visibility = if (Obd.configurado(this)) View.VISIBLE else View.GONE
+            Obd.ouvintes.add(obdOuvinte); Obd.usar(this, "tela")
+        }
+        Relatorio.seguro(this, "som do carro") {
+            if (Build.VERSION.SDK_INT >= 23) {
+                (getSystemService(AUDIO_SERVICE) as android.media.AudioManager)
+                    .registerAudioDeviceCallback(somCallback as android.media.AudioDeviceCallback, null)
+                somRegistrado = true
+            }
+            mostrarSom()
+        }
+        Relatorio.seguro(this, "estado do jarvis") {
+            JarvisService.ouvinte = { e, f, fl -> atualizar(e, f, fl) }
+            atualizar(JarvisService.estado, JarvisService.frase, JarvisService.fala)
+        }
+        Relatorio.seguro(this, "serviço de voz") { if (hotword() && temMic()) JarvisService.enviar(this, JarvisService.INICIAR) }
+        Relatorio.seguro(this, "permissões") {
+            if ((!temMic() || !Obd.permitido(this)) && !pediuPermissoes) { pediuPermissoes = true; pedirMic() }
+        }
+        Relatorio.seguro(this, "atualização") { Updater.verificar(this, false) { marcarAtualizacao() } }
+        Relatorio.marco(this, "tela aberta")
     }
 
-    override fun onPause() { super.onPause(); unregisterReceiver(batt); JarvisService.ouvinte = null
+    override fun onPause() {
+        super.onPause()
+        if (bateriaRegistrada) Relatorio.seguro(this, "bateria-sair") { unregisterReceiver(batt) }
+        bateriaRegistrada = false
+        JarvisService.ouvinte = null
         Obd.ouvintes.remove(obdOuvinte); Obd.soltar("tela")
-        if (Build.VERSION.SDK_INT >= 23) (getSystemService(AUDIO_SERVICE) as android.media.AudioManager)
-            .unregisterAudioDeviceCallback(somCallback as android.media.AudioDeviceCallback)
+        if (somRegistrado && Build.VERSION.SDK_INT >= 23) Relatorio.seguro(this, "som-sair") {
+            (getSystemService(AUDIO_SERVICE) as android.media.AudioManager)
+                .unregisterAudioDeviceCallback(somCallback as android.media.AudioDeviceCallback)
+        }
+        somRegistrado = false
     }
 
     @Deprecated("Deprecated in Java")

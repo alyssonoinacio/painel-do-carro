@@ -135,6 +135,12 @@ class ConfigActivity : Activity() {
         secao(col, "Diagnóstico")
         diag = texto("", 15f, Hud.GELO, false).apply { typeface = android.graphics.Typeface.MONOSPACE; setLineSpacing(0f, 1.2f) }
         col.addView(diag)
+        col.addView(botao("Enviar diagnóstico ao suporte") {
+            Relatorio.enviar(this, "diagnostico", diagnostico() + "\n\n" + (App.ultimoErro(this) ?: ""))
+            status.text = "Diagnóstico enviado."; status.setTextColor(Hud.REATOR)
+        }, LinearLayout.LayoutParams(-1, dp(56)).apply { topMargin = dp(8) })
+        col.addView(chave("Enviar erros automaticamente", "Manda ao suporte o motivo quando o app fecha por erro. Nunca envia o que você fala.",
+            prefs().getBoolean("enviar_erros", true)) { prefs().edit().putBoolean("enviar_erros", it).apply() })
         col.addView(botao("Limpar erro registrado") { App.limparErro(this); diag.text = diagnostico() },
             LinearLayout.LayoutParams(-1, dp(56)).apply { topMargin = dp(8) })
 

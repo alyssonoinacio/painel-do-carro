@@ -18,11 +18,14 @@ class App : Application() {
         // Se o app fechar por erro, guarda o motivo para mostrar na próxima abertura e no Diagnóstico.
         val padrao = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
-            try { File(filesDir, "ultimo_erro.txt").writeText(android.util.Log.getStackTraceString(e).take(4000)) } catch (x: Exception) {}
+            val pilha = android.util.Log.getStackTraceString(e)
+            try { File(filesDir, "ultimo_erro.txt").writeText(pilha.take(4000)) } catch (x: Exception) {}
+            try { Relatorio.enviarAgora(this, "fechou", "thread ${t.name}\n$pilha") } catch (x: Throwable) {}
             padrao?.uncaughtException(t, e)
         }
-        criarCanais(this)
-        BuscaAtualizacao.agendar(this)
+        Relatorio.marco(this, "app iniciado")
+        Relatorio.seguro(this, "canais de notificação") { criarCanais(this) }
+        Relatorio.seguro(this, "agendar busca de versão") { BuscaAtualizacao.agendar(this) }
     }
 
     companion object {

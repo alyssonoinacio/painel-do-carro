@@ -116,6 +116,7 @@ class JarvisService : Service() {
     override fun onCreate() {
         super.onCreate()
         rodando = true; log("serviço iniciado")
+        Relatorio.marco(this, "serviço de voz iniciado")
         jarvis.aviso = { t -> anunciar(t) }
         Radio.aoParar = { if (modo == Modo.DESLIGADO) encerrar() }
         Obd.ouvintes.add(alertaMotor); Obd.usar(this, "voz")
