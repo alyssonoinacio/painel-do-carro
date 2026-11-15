@@ -8,9 +8,9 @@ android {
     defaultConfig {
         applicationId = "br.car.launcher"
         minSdk = 21
-        targetSdk = 32 // 32: no Android 13 o app ainda pode ligar/desligar o Bluetooth por voz
-        versionCode = 9
-        versionName = "2.6"
+        targetSdk = 33 // Android 13, o do tablet
+        versionCode = 10
+        versionName = "2.7"
     }
     buildTypes {
         release {

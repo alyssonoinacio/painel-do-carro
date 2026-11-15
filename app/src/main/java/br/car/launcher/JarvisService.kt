@@ -115,6 +115,9 @@ class JarvisService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // jarvis e voz primeiro: o resto (aviso, alertas, som do carro) usa os dois. Na v2.4 o aviso vinha antes
+        // e o serviço quebrava ao iniciar, levando o app junto (relatório do tablet, 15/11/2026).
+        jarvis = Jarvis(this); voz = Voz(this)
         rodando = true; log("serviço iniciado")
         Relatorio.marco(this, "serviço de voz iniciado")
         jarvis.aviso = { t -> anunciar(t) }
@@ -122,7 +125,6 @@ class JarvisService : Service() {
         Obd.ouvintes.add(alertaMotor); Obd.usar(this, "voz")
         if (Build.VERSION.SDK_INT >= 23) (getSystemService(AUDIO_SERVICE) as AudioManager)
             .registerAudioDeviceCallback(somCarro as android.media.AudioDeviceCallback, h)
-        jarvis = Jarvis(this); voz = Voz(this)
         if (Build.VERSION.SDK_INT >= 26) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
                 NotificationChannel(CANAL, "Jarvis ouvindo", NotificationManager.IMPORTANCE_LOW))

@@ -141,13 +141,12 @@ class Jarvis(private val c: Context) {
         @Suppress("DEPRECATION") val ad = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
         if (ad == null) { pronto(Resposta("Este tablet não tem Bluetooth.")); return true }
         if (!Obd.permitido(c)) { pronto(Resposta("Preciso da permissão de Bluetooth. Abra a tela inicial e permita.")); return true }
+        // Android 13: apps não ligam/desligam o Bluetooth sozinhos; ligar = pedido do sistema (um toque), desligar = tela do Bluetooth.
         try {
             when {
-                desligar -> { @Suppress("DEPRECATION") ad.disable(); pronto(Resposta("Bluetooth desligado.")) }
-                ligar -> {
-                    @Suppress("DEPRECATION") val ok = ad.isEnabled || ad.enable()
-                    pronto(if (ok) Resposta("Bluetooth ligado. Vou reconectar ao som do carro.") else Resposta("Não consegui ligar o Bluetooth. Abri a tela dele.") { abrirBt() })
-                }
+                desligar -> pronto(Resposta("O Android não deixa apps desligarem o Bluetooth. Abri a tela dele para o senhor desligar.") { abrirBt() })
+                ligar -> pronto(if (ad.isEnabled) Resposta("O Bluetooth já está ligado.")
+                                else Resposta("Toque em Permitir para ligar o Bluetooth.") { pedirLigarBt() })
                 else -> conectarSom(ad, pronto)
             }
         } catch (e: SecurityException) { pronto(Resposta("O Android não deixou mexer no Bluetooth. Abri a tela dele.") { abrirBt() }) }
@@ -156,22 +155,23 @@ class Jarvis(private val c: Context) {
 
     /**
      * O Android não deixa um app escolher o aparelho de áudio, mas ao ligar o Bluetooth ele reconecta sozinho ao último
-     * rádio. Então: se já está ligado e sem o carro, desliga e liga de novo; se em 20 s não conectar, abre a lista.
+     * rádio. Bluetooth desligado: pede para ligar (um toque) e espera reconectar. Ligado e sem o carro: abre a lista.
      */
     @android.annotation.SuppressLint("MissingPermission")
     private fun conectarSom(ad: android.bluetooth.BluetoothAdapter, pronto: (Resposta) -> Unit) {
         SomCarro.conectado(c)?.let { pronto(Resposta("Já estou no som do carro, pelo $it.")); return }
-        @Suppress("DEPRECATION")
-        val ok = if (ad.isEnabled) { ad.disable(); main.postDelayed({ try { ad.enable() } catch (e: Exception) {} }, 3000); true } else ad.enable()
-        if (!ok) { pronto(Resposta("Não consegui ligar o Bluetooth sozinho. Toque no rádio do carro na lista.") { abrirBt() }); return }
-        pronto(Resposta("Procurando o rádio do carro, senhor."))
-        main.postDelayed({
-            if (SomCarro.conectado(c) == null) {
-                aviso?.invoke("Não consegui conectar ao rádio sozinho. Abri o Bluetooth; toque no rádio do carro na lista.")
-                abrirBt()
-            }
-        }, 20_000)
+        if (!ad.isEnabled) {
+            pronto(Resposta("Toque em Permitir para ligar o Bluetooth. Depois eu reconecto ao rádio do carro.") { pedirLigarBt() })
+            main.postDelayed({
+                if (SomCarro.conectado(c) == null) {
+                    aviso?.invoke("Não consegui conectar ao rádio sozinho. Abri o Bluetooth; toque no rádio do carro na lista.")
+                    abrirBt()
+                }
+            }, 30_000)
+        } else pronto(Resposta("Abri o Bluetooth. Toque no rádio do carro na lista.") { abrirBt() })
     }
+
+    private fun pedirLigarBt() = c.startActivity(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 
     private fun abrirBt() = c.startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 

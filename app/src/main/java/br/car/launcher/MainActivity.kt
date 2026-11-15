@@ -268,7 +268,8 @@ class MainActivity : Activity() {
     private fun pedirMic() {
         if (Build.VERSION.SDK_INT < 23) return
         val p = mutableListOf(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 31) p.add(Manifest.permission.BLUETOOTH_CONNECT) // ligar Bluetooth e OBD2 por voz
+        if (Build.VERSION.SDK_INT >= 31) p.add(Manifest.permission.BLUETOOTH_CONNECT) // Bluetooth e OBD2 por voz
+        if (Build.VERSION.SDK_INT >= 33) p.add(Manifest.permission.POST_NOTIFICATIONS) // aviso de versão nova
         requestPermissions(p.toTypedArray(), MIC)
     }
 

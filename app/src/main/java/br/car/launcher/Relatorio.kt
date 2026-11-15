@@ -32,7 +32,9 @@ object Relatorio {
         con.requestMethod = "POST"; con.doOutput = true
         con.connectTimeout = 4000; con.readTimeout = 4000
         con.setRequestProperty("Content-Type", "application/json")
-        con.outputStream.use { it.write(json.toByteArray()) }
+        val bytes = json.toByteArray()
+        con.setFixedLengthStreamingMode(bytes.size) // tamanho fixo: o nginx só grava o corpo se ele vier inteiro
+        con.outputStream.use { it.write(bytes) }
         con.responseCode
         con.disconnect()
     }
