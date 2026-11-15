@@ -71,5 +71,5 @@ fun baseV1(url: String): String {
     return if (b.endsWith("/v1")) b else "$b/v1"
 }
 
-val NAVEGACAO = listOf("com.waze", "com.google.android.apps.maps")
+val NAVEGACAO = listOf("com.waze", "com.google.android.apps.maps", "com.google.android.apps.navlite", "com.google.android.apps.mapslite")
 val MUSICA = listOf("com.spotify.music", "com.google.android.apps.youtube.music", "com.google.android.music")

@@ -28,6 +28,8 @@ class ConfigActivity : Activity() {
     private lateinit var url: EditText
     private lateinit var chave: EditText
     private lateinit var modelo: EditText
+    private lateinit var casa: EditText
+    private lateinit var trabalho: EditText
     private var voz: Voz? = null
     private lateinit var diag: TextView
     private lateinit var somStatus: TextView
@@ -76,6 +78,8 @@ class ConfigActivity : Activity() {
         col.addView(somStatus)
         col.addView(botao("Parear com o rádio do carro") { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
             LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(8) })
+        casa = campo(col, "Endereço de casa", "Rua, número, bairro, cidade", p.getString("end_casa", ""), false)
+        trabalho = campo(col, "Endereço do trabalho", "Rua, número, bairro, cidade", p.getString("end_trabalho", ""), false)
         col.addView(texto("Adaptador OBD2 (ELM327): pareie primeiro no Bluetooth do tablet, com a ignição ligada. " +
             "A senha costuma ser 1234 ou 0000.", 15f, Hud.ACO, false).apply { setPadding(0, dp(14), 0, 0) })
         obdStatus = texto("", 17f, Hud.GELO, false).apply { setPadding(0, dp(6), 0, 0) }
@@ -199,7 +203,8 @@ class ConfigActivity : Activity() {
     override fun onDestroy() { voz?.desligar(); super.onDestroy() }
 
     private fun salvar() = prefs().edit().putString("srv_url", url.text.toString().trim())
-        .putString("srv_chave", chave.text.toString().trim()).putString("srv_modelo", modelo.text.toString().trim()).apply()
+        .putString("srv_chave", chave.text.toString().trim()).putString("srv_modelo", modelo.text.toString().trim())
+        .putString("end_casa", casa.text.toString().trim()).putString("end_trabalho", trabalho.text.toString().trim()).apply()
 
     private fun testar() {
         if (srvUrl().isBlank()) { status.text = "Informe o endereço do servidor."; status.setTextColor(Hud.AMBAR); return }

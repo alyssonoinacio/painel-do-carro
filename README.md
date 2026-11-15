@@ -15,6 +15,9 @@ Launcher Android para usar um tablet como central do carro, com visual de HUD e 
 - **Motor (OBD2 ELM327 Bluetooth)**: velocidade, temperatura do motor, bateria e giro na tela; "Jarvis, temperatura do
   motor", "bateria do carro", "tem alguma falha?" (lê os códigos e a IA explica). Só leitura; alerta de motor quente e
   de alternador. Escolha o adaptador em Ajustes, Carro.
+- **Voz no carro**: "conectar no som do carro" (liga o Bluetooth e o Android reconecta ao rádio), "liga/desliga o
+  Bluetooth", "volume 50", "mudo", "tira o mudo", "mudar para a rádio Jovem Pan" (rádio pela internet; o rádio original do
+  HB20 não troca de fonte por comando), "próxima rádio", "me leva pra casa", "onde fica a farmácia". Casa e trabalho em Ajustes.
 - **Módulos**: Navegar (Waze/Maps), Música, Telefone, Apps, Ajustes e Atualizações. Segure um app na lista para
   fixá-lo na doca.
 - **Atualização automática** pelas releases deste repositório.

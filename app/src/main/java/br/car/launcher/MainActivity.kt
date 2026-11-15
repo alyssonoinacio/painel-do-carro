@@ -195,6 +195,7 @@ class MainActivity : Activity() {
         JarvisService.ouvinte = { e, f, fl -> atualizar(e, f, fl) }
         atualizar(JarvisService.estado, JarvisService.frase, JarvisService.fala)
         if (hotword()) { if (temMic()) JarvisService.enviar(this, JarvisService.INICIAR) else pedirMic() }
+        else if (!temMic() || !Obd.permitido(this)) pedirMic()
         Updater.verificar(this, false) { marcarAtualizacao() }
     }
 
@@ -216,12 +217,14 @@ class MainActivity : Activity() {
 
     private fun ouvir() {
         if (!temMic()) { ouvirAoPermitir = true; pedirMic(); return }
-        JarvisService.enviar(this, JarvisService.OUVIR)
+        // tocar de novo enquanto ouve = cancelar
+        JarvisService.enviar(this, if (JarvisService.estado == Estado.OUVINDO) JarvisService.CANCELAR else JarvisService.OUVIR)
     }
 
     private fun pedirMic() {
         if (Build.VERSION.SDK_INT < 23) return
         val p = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 31) p.add(Manifest.permission.BLUETOOTH_CONNECT) // ligar Bluetooth e OBD2 por voz
         if (Build.VERSION.SDK_INT >= 33) p.add(Manifest.permission.POST_NOTIFICATIONS)
         requestPermissions(p.toTypedArray(), MIC)
     }

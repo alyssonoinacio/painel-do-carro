@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
@@ -30,8 +31,22 @@ class Jarvis(private val c: Context) {
 
     private val br = Locale("pt", "BR")
 
+    /** O serviço de voz liga isto para o Jarvis poder falar depois, sem ter sido chamado (ex.: "não consegui conectar"). */
+    var aviso: ((String) -> Unit)? = null
+    /** Pergunta que o Jarvis fez e espera resposta na próxima frase ("Qual rádio, senhor?"). */
+    private var pendente: String? = null
+
     fun responder(frase: String, pronto: (Resposta) -> Unit) {
-        if (perguntaFalhas(frase.semAcento())) { falhas(pronto); return }
+        val fn = frase.semAcento().removePrefix("jarvis").trim(' ', ',', '.')
+        if (pendente == "radio") {
+            pendente = null
+            if (Regex("^(nenhuma|deixa|cancela|esquece|nada|nao)").containsMatchIn(fn)) pronto(Resposta("Tudo bem, senhor."))
+            else sintonizar(frase.trim(), pronto)
+            return
+        }
+        if (bluetooth(fn, pronto)) return
+        if (radio(frase, fn, pronto)) return
+        if (perguntaFalhas(fn)) { falhas(pronto); return }
         val local = comandoLocal(frase)
         if (local != null) { pronto(local); return }
         if (c.srvUrl().isBlank()) {
@@ -50,27 +65,42 @@ class Jarvis(private val c: Context) {
     private fun comandoLocal(bruta: String): Resposta? {
         val f = bruta.semAcento().removePrefix("jarvis").trim(' ', ',', '.')
 
-        Regex("^(?:navegar|navega|ir|vamos|me leva|me leve|leva|rota|tracar rota|como chego|como chegar)\\s+(?:ate|para|pra|pro|ao|a|na|no|em)\\s+(.+)$")
-            .find(f)?.let { m ->
-                val destino = bruta.trim().trimEnd('.', '!', '?').split(Regex("\\s+")).takeLast(m.groupValues[1].split(" ").size).joinToString(" ")
-                return Resposta("Traçando rota para $destino.") { navegar(destino) }
-            }
+        rota(bruta, f)?.let { return it }
 
+        // volume: o do tablet é o mesmo que vai pelo Bluetooth para o som do carro
         val audio = c.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val musica = AudioManager.STREAM_MUSIC
+        val max = audio.getStreamMaxVolume(musica)
+        Regex("\\bvolume\\b\\D*(\\d{1,3})").find(f)?.let { m ->
+            val pc = m.groupValues[1].toInt().coerceIn(0, 100)
+            return Resposta("Volume em $pc por cento.") { audio.setStreamVolume(musica, (max * pc + 50) / 100, 0) }
+        }
+        if (Regex("(tira|tirar|desativa|desativar|sai do|sair do) (o )?mudo|volta o som|desmuta|desmutar").containsMatchIn(f))
+            return Resposta("Som de volta.") {
+                if (Build.VERSION.SDK_INT >= 23) audio.adjustStreamVolume(musica, AudioManager.ADJUST_UNMUTE, 0)
+                if (audio.getStreamVolume(musica) == 0) audio.setStreamVolume(musica, max / 3, 0) }
+        if (Regex("\\b(mudo|silencio|sem som|muta|mutar)\\b").containsMatchIn(f))
+            return Resposta("Silenciando.", agirDepois = true) {
+                if (Build.VERSION.SDK_INT >= 23) audio.adjustStreamVolume(musica, AudioManager.ADJUST_MUTE, 0)
+                else audio.setStreamVolume(musica, 0, 0) }
         if (Regex("\\b(volume|som)\\b").containsMatchIn(f) || f.startsWith("aumenta") || f.startsWith("abaixa")) {
+            val passos = if (Regex("bastante|muito|mais ainda").containsMatchIn(f)) 4 else 2
             when {
                 Regex("maxim|no talo|no maximo").containsMatchIn(f) -> return Resposta("Volume no máximo.") {
-                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC), 0) }
+                    audio.setStreamVolume(musica, max, 0) }
                 Regex("aument|sobe|subir|mais alto").containsMatchIn(f) -> return Resposta("Aumentando.") {
-                    repeat(2) { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0) } }
+                    repeat(passos) { audio.adjustStreamVolume(musica, AudioManager.ADJUST_RAISE, 0) } }
                 Regex("diminu|abaix|baix|mais baixo").containsMatchIn(f) -> return Resposta("Abaixando.") {
-                    repeat(2) { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, 0) } }
+                    repeat(passos) { audio.adjustStreamVolume(musica, AudioManager.ADJUST_LOWER, 0) } }
             }
         }
-        if (Regex("^(pausa|pausar|pause|parar a musica|para a musica)").containsMatchIn(f)) return Resposta("Pausado.") { tecla(audio, KeyEvent.KEYCODE_MEDIA_PAUSE) }
-        if (Regex("^(proxima|pula|pular|avanca)").containsMatchIn(f)) return Resposta("Próxima.") { tecla(audio, KeyEvent.KEYCODE_MEDIA_NEXT) }
+        if (Regex("^(pausa|pausar|pause|parar a musica|para a musica)").containsMatchIn(f)) return Resposta("Pausado.") {
+            if (Radio.tocando) Radio.pausar() else tecla(audio, KeyEvent.KEYCODE_MEDIA_PAUSE) }
+        if (Regex("^(proxima|pula|pular|avanca)").containsMatchIn(f)) return Resposta("Próxima.") {
+            if (Radio.tocando) Radio.proxima { } else tecla(audio, KeyEvent.KEYCODE_MEDIA_NEXT) }
         if (Regex("^(anterior|volta a musica|musica anterior)").containsMatchIn(f)) return Resposta("Voltando.") { tecla(audio, KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
-        if (Regex("^(continua|continuar|play|despausa)").containsMatchIn(f)) return Resposta("Tocando.") { tecla(audio, KeyEvent.KEYCODE_MEDIA_PLAY) }
+        if (Regex("^(continua|continuar|play|despausa)").containsMatchIn(f)) return Resposta("Tocando.") {
+            if (Radio.atual != null && !Radio.tocando) Radio.retomar() else tecla(audio, KeyEvent.KEYCODE_MEDIA_PLAY) }
         tocar(bruta)?.let { return it }
 
         Regex("^(?:ligar|liga|ligue|telefonar)\\s+(?:para|pra|pro)\\s+(.+)$").find(f)?.let { m ->
@@ -100,6 +130,83 @@ class Jarvis(private val c: Context) {
             else Resposta("Não encontrei o app $alvo neste tablet.")
         }
         return null
+    }
+
+    // ---------- Bluetooth por voz ----------
+    private fun bluetooth(f: String, pronto: (Resposta) -> Unit): Boolean {
+        val desligar = Regex("(desligar|desliga|desative|desativar|desativa) (o )?bluetooth").containsMatchIn(f)
+        val ligar = Regex("^(ligar|liga|ligue|ative|ativar|ativa) (o )?bluetooth$").containsMatchIn(f)
+        val conectar = Regex("(conecta|conectar|conecte|parear|pareia|reconecta|reconectar)\\b.*\\b(som|radio|bluetooth|multimidia|carro)").containsMatchIn(f)
+        if (!desligar && !ligar && !conectar) return false
+        @Suppress("DEPRECATION") val ad = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+        if (ad == null) { pronto(Resposta("Este tablet não tem Bluetooth.")); return true }
+        if (!Obd.permitido(c)) { pronto(Resposta("Preciso da permissão de Bluetooth. Abra a tela inicial e permita.")); return true }
+        try {
+            when {
+                desligar -> { @Suppress("DEPRECATION") ad.disable(); pronto(Resposta("Bluetooth desligado.")) }
+                ligar -> {
+                    @Suppress("DEPRECATION") val ok = ad.isEnabled || ad.enable()
+                    pronto(if (ok) Resposta("Bluetooth ligado. Vou reconectar ao som do carro.") else Resposta("Não consegui ligar o Bluetooth. Abri a tela dele.") { abrirBt() })
+                }
+                else -> conectarSom(ad, pronto)
+            }
+        } catch (e: SecurityException) { pronto(Resposta("O Android não deixou mexer no Bluetooth. Abri a tela dele.") { abrirBt() }) }
+        return true
+    }
+
+    /**
+     * O Android não deixa um app escolher o aparelho de áudio, mas ao ligar o Bluetooth ele reconecta sozinho ao último
+     * rádio. Então: se já está ligado e sem o carro, desliga e liga de novo; se em 20 s não conectar, abre a lista.
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun conectarSom(ad: android.bluetooth.BluetoothAdapter, pronto: (Resposta) -> Unit) {
+        SomCarro.conectado(c)?.let { pronto(Resposta("Já estou no som do carro, pelo $it.")); return }
+        @Suppress("DEPRECATION")
+        val ok = if (ad.isEnabled) { ad.disable(); main.postDelayed({ try { ad.enable() } catch (e: Exception) {} }, 3000); true } else ad.enable()
+        if (!ok) { pronto(Resposta("Não consegui ligar o Bluetooth sozinho. Toque no rádio do carro na lista.") { abrirBt() }); return }
+        pronto(Resposta("Procurando o rádio do carro, senhor."))
+        main.postDelayed({
+            if (SomCarro.conectado(c) == null) {
+                aviso?.invoke("Não consegui conectar ao rádio sozinho. Abri o Bluetooth; toque no rádio do carro na lista.")
+                abrirBt()
+            }
+        }, 20_000)
+    }
+
+    private fun abrirBt() = c.startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+    // ---------- rádio pela internet ----------
+    private fun radio(bruta: String, f: String, pronto: (Resposta) -> Unit): Boolean {
+        if (!Regex("\\bradio\\b").containsMatchIn(f)) return false
+        if (Regex("(parar|para|desliga|desligar|pausa|pausar|fecha|fechar|tira|tirar|cala) (a |o )?radio").containsMatchIn(f)) {
+            pronto(Resposta("Rádio desligada.") { Radio.parar() }); return true
+        }
+        if (Regex("(proxima|outra|troca|trocar|muda de) radio|radio seguinte").containsMatchIn(f)) {
+            Radio.proxima { n -> pronto(Resposta(if (n != null) "Sintonizando $n." else "Não tenho outra rádio nessa busca. Diga o nome da rádio.")) }
+            return true
+        }
+        val toks = bruta.trim().split(Regex("\\s+")).map { it.trim(',', '.', '!', '?') }.filter { it.isNotEmpty() }
+        val i = toks.indexOfFirst { it.semAcento() == "radio" }
+        var nome = toks.drop(i + 1).joinToString(" ")
+        val nn = nome.semAcento()
+        if (Regex("^(do carro|fm do carro|original|do painel|normal)").containsMatchIn(nn)) {
+            pendente = "radio"
+            pronto(Resposta("Não consigo mudar a fonte do rádio do HB20 pelo tablet. Posso tocar uma rádio pela internet. Qual, senhor?", conversa = true))
+            return true
+        }
+        if (nn.isBlank() || nn in setOf("fm", "am", "por favor")) {
+            val ult = Radio.ultima(c)
+            if (ult == null) { pendente = "radio"; pronto(Resposta("Qual rádio, senhor?", conversa = true)); return true }
+            nome = ult
+        }
+        sintonizar(nome, pronto)
+        return true
+    }
+
+    private fun sintonizar(nome: String, pronto: (Resposta) -> Unit) {
+        Radio.tocar(c, nome) { est ->
+            pronto(if (est != null) Resposta("Sintonizando $est.") else Resposta("Não encontrei a rádio $nome. Tente outro nome, senhor."))
+        }
     }
 
     // ---------- carro: som (Bluetooth do rádio) e motor (OBD2) ----------
@@ -244,20 +351,63 @@ class Jarvis(private val c: Context) {
         } catch (e: Exception) {}
     }
 
-    fun navegar(destino: String?) {
-        val q = Uri.encode(destino ?: "")
-        val intent = when {
-            c.instalado("com.waze") && destino != null ->
-                Intent(Intent.ACTION_VIEW, Uri.parse("https://waze.com/ul?q=$q&navigate=yes")).setPackage("com.waze")
-            c.instalado("com.google.android.apps.maps") && destino != null ->
-                Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q")).setPackage("com.google.android.apps.maps")
-            destino == null && NAVEGACAO.any { c.instalado(it) } -> {
-                NAVEGACAO.first { c.startPkg(it) }; return
-            }
-            else -> Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$q"))
+    // ---------- rotas ----------
+    /**
+     * "navegar para o shopping", "me leva pra casa", "rota até o trabalho", "quero ir no aeroporto",
+     * "como chego na rodoviária", "onde fica a farmácia mais próxima" (só mostra no mapa).
+     * "casa" e "trabalho" usam os endereços salvos em Ajustes.
+     */
+    private fun rota(bruta: String, f: String): Resposta? {
+        val verbo = "navegar|navega|navegue|ir|vai|vamos|me leva|me leve|leva|leve|rota|tracar rota|traca uma rota|traca rota|" +
+            "como chego|como chegar|como eu chego|quero ir|preciso ir|me guia|me guie|guia|direcoes|caminho|abre o waze|abrir o waze|abre o mapa|abrir o mapa"
+        val m = Regex("^(?:$verbo)\\s+(?:ate o|ate a|ate|para o|para a|para|pra|pro|pra o|ao|a|na|no|em|pela|pelo)\\s+(.+)$").find(f)
+        val onde = if (m == null) Regex("^(?:onde fica|onde e|cade)\\s+(?:o |a )?(.+)$").find(f) else null
+        if (m == null && onde == null) return null
+        val alvo = (m ?: onde)!!.groupValues[1]
+        val destino = when {
+            Regex("^(minha )?casa$").matches(alvo) -> c.prefs().getString("end_casa", "").orEmpty()
+                .ifBlank { return Resposta("Ainda não sei o endereço de casa. Cadastre em Ajustes, na seção Carro.") }
+            Regex("^(meu )?(trabalho|servico|escritorio|emprego)$").matches(alvo) -> c.prefs().getString("end_trabalho", "").orEmpty()
+                .ifBlank { return Resposta("Ainda não sei o endereço do trabalho. Cadastre em Ajustes, na seção Carro.") }
+            // o texto original, com acentos, para a busca do mapa
+            else -> bruta.trim().trimEnd('.', '!', '?').split(Regex("\\s+")).takeLast(alvo.split(" ").size).joinToString(" ")
         }
-        try { c.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) {}
+        val falado = when {
+            Regex("^(minha )?casa$").matches(alvo) -> "casa"
+            Regex("^(meu )?(trabalho|servico|escritorio|emprego)$").matches(alvo) -> "o trabalho"
+            else -> destino
+        }
+        return if (onde != null) Resposta("Mostrando $falado no mapa.") { mostrarNoMapa(destino) }
+        else Resposta("Traçando rota para $falado.") { navegar(destino) }
     }
+
+    /** Abre a rota no primeiro app de navegação que funcionar: Waze, Google Maps, Maps Go, navegador. */
+    fun navegar(destino: String?) {
+        if (destino == null) {
+            if (NAVEGACAO.any { c.startPkg(it) }) return
+            abrir(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps")))
+            return
+        }
+        val q = Uri.encode(destino)
+        val tentativas = listOfNotNull(
+            if (c.instalado("com.waze")) Intent(Intent.ACTION_VIEW, Uri.parse("https://waze.com/ul?q=$q&navigate=yes")).setPackage("com.waze") else null,
+            if (c.instalado("com.google.android.apps.maps")) Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q&mode=d")).setPackage("com.google.android.apps.maps") else null,
+            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q&mode=d")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$q")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$q&travelmode=driving")),
+        )
+        for (i in tentativas) if (abrir(i)) return
+    }
+
+    private fun mostrarNoMapa(lugar: String) {
+        val q = Uri.encode(lugar)
+        if (!abrir(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$q"))))
+            abrir(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=$q")))
+    }
+
+    private fun abrir(i: Intent): Boolean = try {
+        c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
+    } catch (e: Exception) { false }
 
     // ---------- servidor (OpenJarvis ou outro compatível com OpenAI) ----------
     private fun endpoint(base: String) = baseV1(base) + "/chat/completions"

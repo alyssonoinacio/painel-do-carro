@@ -26,7 +26,7 @@ import android.speech.SpeechRecognizer
  */
 class JarvisService : Service() {
     companion object {
-        const val INICIAR = "iniciar"; const val OUVIR = "ouvir"; const val PARAR = "parar"
+        const val INICIAR = "iniciar"; const val OUVIR = "ouvir"; const val PARAR = "parar"; const val CANCELAR = "cancelar"
         private const val CANAL = "jarvis"
         private val PALAVRA = Regex("\\b(jarvis|jarviz|jarves|jervis|djarvis|jarbas)\\b")
 
@@ -116,6 +116,8 @@ class JarvisService : Service() {
     override fun onCreate() {
         super.onCreate()
         rodando = true; log("serviço iniciado")
+        jarvis.aviso = { t -> anunciar(t) }
+        Radio.aoParar = { if (modo == Modo.DESLIGADO) encerrar() }
         Obd.ouvintes.add(alertaMotor); Obd.usar(this, "voz")
         if (Build.VERSION.SDK_INT >= 23) (getSystemService(AUDIO_SERVICE) as AudioManager)
             .registerAudioDeviceCallback(somCarro as android.media.AudioDeviceCallback, h)
@@ -138,7 +140,7 @@ class JarvisService : Service() {
 
     override fun onStartCommand(i: Intent?, flags: Int, startId: Int): Int {
         try {
-            if (Build.VERSION.SDK_INT >= 29) startForeground(1, notificacao(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            if (Build.VERSION.SDK_INT >= 29) startForeground(1, notificacao(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
             else startForeground(1, notificacao())
         } catch (e: Exception) { stopSelf(); return START_NOT_STICKY }
         if (!SpeechRecognizer.isRecognitionAvailable(this) && !noAparelho()) {
@@ -148,6 +150,7 @@ class JarvisService : Service() {
         }
         when (i?.action) {
             OUVIR -> ouvirComando()
+            CANCELAR -> { log("escuta cancelada no toque"); rec?.cancel(); voltar() }
             PARAR -> encerrar()
             else -> if (hotword()) { if (modo == Modo.DESLIGADO) esperar() } else if (modo == Modo.DESLIGADO) encerrar()
         }
@@ -172,21 +175,39 @@ class JarvisService : Service() {
         .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
 
     private fun esperar() {
-        if (modo != Modo.ESPERA) log("esperando a palavra “Jarvis”")
+        val vindoDeOutro = modo != Modo.ESPERA
+        if (vindoDeOutro) log("esperando a palavra “Jarvis”")
         modo = Modo.ESPERA
         silenciar(true) // o bipe de cada reinício da escuta não pode tocar a cada poucos segundos
         publicar(Estado.AGUARDANDO, null, null)
-        try { recognizer().cancel(); recognizer().startListening(pedido(true)) } catch (e: Exception) { reiniciarDepois(2000) }
+        if (vindoDeOutro) { rec?.destroy(); rec = null; reiniciarDepois(300); return }
+        try { recognizer().startListening(pedido(true)) } catch (e: Exception) { rec?.destroy(); rec = null; reiniciarDepois(2000) }
     }
 
-    private fun ouvirComando() {
+    private var tentativasPedido = 0
+
+    /**
+     * Escuta o pedido (toque no círculo ou depois do "Jarvis"). Reinicia o MESMO reconhecedor logo após
+     * cancel() dá "erro do cliente" em vários aparelhos e o círculo voltava ao repouso sem ouvir nada:
+     * por isso cria um reconhecedor novo e espera um instante antes de começar.
+     */
+    private fun ouvirComando(primeira: Boolean = true) {
         log("ouvindo o pedido")
+        if (primeira) tentativasPedido = 0
         voz.parar()
+        h.removeCallbacksAndMessages(null)
         modo = Modo.COMANDO
         silenciar(false) // aqui o bipe é útil: avisa que pode falar
         publicar(Estado.OUVINDO, null, null)
-        try { recognizer().cancel(); recognizer().startListening(pedido(false)) } catch (e: Exception) { voltar() }
+        rec?.destroy(); rec = null
+        h.postDelayed({
+            if (modo == Modo.COMANDO) try { recognizer().startListening(pedido(false)) } catch (e: Exception) {
+                log("falha ao começar a ouvir: ${e.message}"); naoOuvi("Não consegui usar o microfone. Tente de novo.")
+            }
+        }, 250)
     }
+
+    private fun naoOuvi(msg: String) { publicar(Estado.PARADO, null, msg); voltar() }
 
     private fun reiniciarDepois(ms: Long) {
         h.removeCallbacksAndMessages(null)
@@ -232,7 +253,16 @@ class JarvisService : Service() {
                         rec?.destroy(); rec = null; reiniciarDepois(minOf(30_000L, 1_000L * falhas))
                     }
                 }
-                Modo.COMANDO -> voltar()
+                Modo.COMANDO -> when (erro) {
+                    SpeechRecognizer.ERROR_CLIENT, SpeechRecognizer.ERROR_RECOGNIZER_BUSY, 11 ->
+                        if (tentativasPedido++ < 2) ouvirComando(false) else naoOuvi("O reconhecimento de voz não respondeu. Tente de novo.")
+                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> naoOuvi("Não ouvi nada. Toque no círculo e fale logo depois do bipe.")
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> { publicar(Estado.PARADO, null, "Preciso da permissão do microfone."); encerrar() }
+                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER ->
+                        naoOuvi("Sem internet para entender a voz. Confira a conexão do tablet.")
+                    SpeechRecognizer.ERROR_AUDIO -> naoOuvi("O microfone está ocupado por outro app.")
+                    else -> naoOuvi("Não consegui ouvir (${nomeErro(erro)}). Tente de novo.")
+                }
                 else -> {}
             }
         }
@@ -304,6 +334,7 @@ class JarvisService : Service() {
         silenciar(false)
         rec?.destroy(); rec = null
         if (estado != Estado.PARADO) publicar(Estado.PARADO, null, null)
+        if (Radio.tocando) { log("rádio tocando: serviço segue em primeiro plano"); return } // a rádio precisa do serviço vivo
         stopForeground(true)
         stopSelf()
     }
@@ -318,6 +349,7 @@ class JarvisService : Service() {
         silenciar(false)
         rec?.destroy(); rec = null
         voz.desligar()
+        Radio.aoParar = null; Radio.parar()
         super.onDestroy()
     }
 }
