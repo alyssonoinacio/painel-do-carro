@@ -22,6 +22,8 @@ import android.widget.TextClock
 import android.widget.TextView
 import android.widget.Toast
 
+object UpdateItem
+
 class MainActivity : Activity() {
     private lateinit var grid: GridView
     private lateinit var battery: TextView
@@ -97,6 +99,7 @@ class MainActivity : Activity() {
         super.onResume()
         registerReceiver(batt, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         refresh()
+        Updater.verificar(this, false) { refresh() }
     }
 
     override fun onPause() { super.onPause(); unregisterReceiver(batt) }
@@ -104,12 +107,16 @@ class MainActivity : Activity() {
     override fun onBackPressed() {} // launcher: Voltar não sai da tela inicial
 
     private fun refresh() {
-        items.clear(); items.addAll(fixed)
+        items.clear(); items.addAll(fixed); items.add(UpdateItem)
         items.addAll(pins().filter { packageManager.getLaunchIntentForPackage(it) != null }.sorted())
         adapter.notifyDataSetChanged()
     }
 
     private fun open(it: Any) {
+        if (it === UpdateItem) {
+            if (Updater.versao != null) Updater.instalar(this) else Updater.verificar(this, true) { refresh() }
+            return
+        }
         if (it is String) { startPkg(it); return }
         val t = it as Tile
         if (t.pkgs.any { p -> startPkg(p) }) return
@@ -127,7 +134,10 @@ class MainActivity : Activity() {
         override fun getItemId(p: Int) = p.toLong()
         override fun getView(p: Int, v: View?, parent: ViewGroup): View {
             val it = items[p]
-            val v2 = if (it is Tile) {
+            val v2 = if (it === UpdateItem) {
+                val v = Updater.versao
+                cardView(if (v != null) "Atualizar para $v" else "Verificar atualização", null, if (v != null) "⬇" else "🔄")
+            } else if (it is Tile) {
                 val pkg = it.pkgs.firstOrNull { k -> packageManager.getLaunchIntentForPackage(k) != null }
                 val icon = pkg?.let { k -> packageManager.getApplicationIcon(k) }
                 cardView(it.label, icon, it.emoji)
