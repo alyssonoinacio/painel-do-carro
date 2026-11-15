@@ -63,7 +63,7 @@ object Updater {
                         if (a.getString("name").endsWith(".apk")) apk = a.getString("browser_download_url")
                     }
                     prefs.edit().putLong("ultima_checagem", System.currentTimeMillis()).apply()
-                    if (apk != null && maisNova(tag, atual(c))) { versao = tag; url = apk }
+                    if (apk != null && maisNova(tag, atual(c))) { versao = tag; url = apk; notificar(c, tag) }
                     else { versao = null; url = null; if (manual) toast(c, "Você já está na versão mais recente (${atual(c)}).") }
                 }
             } catch (e: Exception) {
@@ -71,6 +71,24 @@ object Updater {
             }
             main.post(aoTerminar)
         }
+    }
+
+    /** Avisa na barra de notificações, uma vez por versão. Tocar abre o app já atualizando. */
+    private fun notificar(c: Context, v: String) {
+        val prefs = c.getSharedPreferences("car", Context.MODE_PRIVATE)
+        if (prefs.getString("notificou_versao", "") == v) return
+        prefs.edit().putString("notificou_versao", v).apply()
+        App.criarCanais(c)
+        val abrir = PendingIntent.getActivity(c, 5,
+            Intent(c, MainActivity::class.java).setAction(MainActivity.ACAO_ATUALIZAR).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val b = if (Build.VERSION.SDK_INT >= 26) android.app.Notification.Builder(c, App.CANAL_ATUALIZACAO)
+                else @Suppress("DEPRECATION") android.app.Notification.Builder(c)
+        val n = b.setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Nova versão do Jarvis do Carro")
+            .setContentText("A versão $v está pronta. Toque para atualizar.")
+            .setContentIntent(abrir).setAutoCancel(true).build()
+        try { (c.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).notify(2, n) } catch (e: Exception) {}
     }
 
     /** Baixa o APK direto para uma sessão do instalador; o Android pede a confirmação do usuário. */
@@ -92,7 +110,7 @@ object Updater {
                 val s = pi.openSession(id)
                 val con = URL(link).openConnection() as HttpURLConnection
                 con.connectTimeout = 15000; con.readTimeout = 30000
-                s.openWrite("app", 0, con.contentLengthLong).use { out ->
+                s.openWrite("app", 0, if (Build.VERSION.SDK_INT >= 24) con.contentLengthLong else con.contentLength.toLong()).use { out ->
                     con.inputStream.use { it.copyTo(out) }
                     s.fsync(out)
                 }

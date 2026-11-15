@@ -24,6 +24,12 @@ import android.widget.TextView
 import android.widget.Toast
 
 class MainActivity : Activity() {
+    companion object {
+        const val ACAO_ATUALIZAR = "br.car.launcher.ATUALIZAR"
+        /** Permissões pedidas no máximo uma vez por abertura: pedir no onResume em loop travava o app (v2.4). */
+        private var pediuPermissoes = false
+    }
+
     private lateinit var jarvis: Jarvis
 
     private lateinit var reator: Reator
@@ -59,6 +65,20 @@ class MainActivity : Activity() {
         window.statusBarColor = Hud.ABISMO; window.navigationBarColor = Hud.ABISMO
         jarvis = Jarvis(this)
         montar()
+        App.ultimoErro(this)?.let {
+            falaTxt.text = "Na última vez o app fechou por um erro. Se repetir, mande uma foto de Ajustes, Diagnóstico."
+        }
+        tratar(intent)
+    }
+
+    override fun onNewIntent(i: Intent?) { super.onNewIntent(i); tratar(i) }
+
+    /** Toque na notificação de versão nova: baixa e instala. */
+    private fun tratar(i: Intent?) {
+        if (i?.action != ACAO_ATUALIZAR) return
+        i.action = null
+        if (Updater.versao != null) Updater.instalar(this)
+        else Updater.verificar(this, true) { marcarAtualizacao(); if (Updater.versao != null) Updater.instalar(this) }
     }
 
     override fun onConfigurationChanged(nova: Configuration) {
@@ -194,8 +214,8 @@ class MainActivity : Activity() {
         mostrarSom()
         JarvisService.ouvinte = { e, f, fl -> atualizar(e, f, fl) }
         atualizar(JarvisService.estado, JarvisService.frase, JarvisService.fala)
-        if (hotword()) { if (temMic()) JarvisService.enviar(this, JarvisService.INICIAR) else pedirMic() }
-        else if (!temMic() || !Obd.permitido(this)) pedirMic()
+        if (hotword() && temMic()) JarvisService.enviar(this, JarvisService.INICIAR)
+        if ((!temMic() || !Obd.permitido(this)) && !pediuPermissoes) { pediuPermissoes = true; pedirMic() }
         Updater.verificar(this, false) { marcarAtualizacao() }
     }
 
@@ -225,7 +245,6 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT < 23) return
         val p = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 31) p.add(Manifest.permission.BLUETOOTH_CONNECT) // ligar Bluetooth e OBD2 por voz
-        if (Build.VERSION.SDK_INT >= 33) p.add(Manifest.permission.POST_NOTIFICATIONS)
         requestPermissions(p.toTypedArray(), MIC)
     }
 

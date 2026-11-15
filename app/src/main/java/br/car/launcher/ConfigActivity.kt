@@ -135,6 +135,8 @@ class ConfigActivity : Activity() {
         secao(col, "Diagnóstico")
         diag = texto("", 15f, Hud.GELO, false).apply { typeface = android.graphics.Typeface.MONOSPACE; setLineSpacing(0f, 1.2f) }
         col.addView(diag)
+        col.addView(botao("Limpar erro registrado") { App.limparErro(this); diag.text = diagnostico() },
+            LinearLayout.LayoutParams(-1, dp(56)).apply { topMargin = dp(8) })
 
         col.addView(botao("Abrir ajustes do Android") { startActivity(Intent(Settings.ACTION_SETTINGS)) },
             LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(20) })
@@ -196,6 +198,7 @@ class ConfigActivity : Activity() {
             "OBD2: " + (if (Obd.configurado(this)) Obd.status else "não configurado"),
             "Versão: " + packageManager.getPackageInfo(packageName, 0).versionName,
             "", "Últimos eventos:")
+        App.ultimoErro(this)?.let { linhas.add(0, "Último erro: " + it.lines().take(4).joinToString(" | ")); linhas.add(1, "") }
         synchronized(JarvisService.diag) { linhas.addAll(JarvisService.diag.take(12)) }
         if (JarvisService.diag.isEmpty()) linhas.add("(nenhum ainda)")
         return linhas.joinToString("\n")
@@ -244,8 +247,10 @@ class ConfigActivity : Activity() {
         addView(Switch(context).apply {
             isChecked = valor; minimumHeight = dp(56)
             val estados = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
-            thumbTintList = ColorStateList(estados, intArrayOf(Hud.REATOR, Hud.ACO))
-            trackTintList = ColorStateList(estados, intArrayOf(0x883FE0FF.toInt(), 0x445D7A92))
+            if (Build.VERSION.SDK_INT >= 23) {
+                thumbTintList = ColorStateList(estados, intArrayOf(Hud.REATOR, Hud.ACO))
+                trackTintList = ColorStateList(estados, intArrayOf(0x883FE0FF.toInt(), 0x445D7A92))
+            }
             setOnCheckedChangeListener { _, v -> mudou(v) }
         })
     }
