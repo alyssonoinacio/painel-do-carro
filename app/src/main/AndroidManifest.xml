@@ -3,9 +3,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+        <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
     </queries>
-    <application android:label="Painel do Carro" android:theme="@android:style/Theme.Material.NoActionBar">
+    <application android:label="Jarvis do Carro" android:theme="@android:style/Theme.Material.NoActionBar" android:usesCleartextTraffic="true">
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
@@ -15,6 +18,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".ConfigActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".AppsActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <receiver android:name=".UpdateReceiver" android:exported="false" />
