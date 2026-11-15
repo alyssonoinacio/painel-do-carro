@@ -23,7 +23,7 @@ import kotlin.concurrent.thread
  * da OpenAI — o OpenJarvis (`jarvis serve`) expõe exatamente isso em /v1/chat/completions.
  */
 class Jarvis(private val c: Context) {
-    class Resposta(val fala: String, val acao: (() -> Unit)? = null)
+    class Resposta(val fala: String, val conversa: Boolean = false, val acao: (() -> Unit)? = null)
 
     private val historico = ArrayList<JSONObject>()
     private val main = Handler(Looper.getMainLooper())
@@ -33,8 +33,7 @@ class Jarvis(private val c: Context) {
     fun responder(frase: String, pronto: (Resposta) -> Unit) {
         val local = comandoLocal(frase)
         if (local != null) { pronto(local); return }
-        val url = c.prefs().getString("srv_url", "").orEmpty()
-        if (url.isBlank()) {
+        if (c.srvUrl().isBlank()) {
             pronto(Resposta("Ainda não tenho servidor para conversar. Configure em Ajustes. Comandos do carro funcionam sem ele."))
             return
         }
@@ -42,7 +41,7 @@ class Jarvis(private val c: Context) {
             val r = try { perguntar(frase) } catch (e: Exception) {
                 "Não consegui falar com o servidor. Verifique a internet ou o endereço em Ajustes."
             }
-            main.post { pronto(Resposta(r)) }
+            main.post { pronto(Resposta(r, conversa = true)) }
         }
     }
 
@@ -131,23 +130,20 @@ class Jarvis(private val c: Context) {
     }
 
     // ---------- servidor (OpenJarvis ou outro compatível com OpenAI) ----------
-    private fun endpoint(base: String): String {
-        val b = base.trim().trimEnd('/')
-        if (b.endsWith("/chat/completions")) return b
-        return (if (b.endsWith("/v1")) b else "$b/v1") + "/chat/completions"
-    }
+    private fun endpoint(base: String) = baseV1(base) + "/chat/completions"
 
     private fun perguntar(frase: String): String {
-        val p = c.prefs()
         historico.add(JSONObject().put("role", "user").put("content", frase))
         while (historico.size > 8) historico.removeAt(0)
         val msgs = JSONArray().put(JSONObject().put("role", "system").put("content",
-            "Você é o Jarvis, o assistente de voz deste carro. Responda em português do Brasil, em no máximo duas " +
-            "frases curtas, porque o motorista está dirigindo e vai ouvir a resposta. Sem markdown, listas ou emojis."))
+            "Você é Jarvis, a inteligência artificial deste carro: educado, calmo, preciso e com um humor seco e discreto. " +
+            "Trate o motorista por senhor. Responda em português do Brasil, em no máximo duas frases curtas, porque ele está " +
+            "dirigindo e vai ouvir a resposta. Sem markdown, listas ou emojis. Hoje é " +
+            SimpleDateFormat("EEEE, d 'de' MMMM 'de' yyyy, HH:mm", br).format(Date()) + "."))
         historico.forEach { msgs.put(it) }
-        val corpo = JSONObject().put("model", p.getString("srv_modelo", "").orEmpty().ifBlank { "default" })
+        val corpo = JSONObject().put("model", c.srvModelo())
             .put("messages", msgs).put("max_tokens", 300).put("stream", false)
-        val texto = postar(p.getString("srv_url", "")!!, p.getString("srv_chave", "").orEmpty(), corpo)
+        val texto = postar(c.srvUrl(), c.srvChave(), corpo)
         historico.add(JSONObject().put("role", "assistant").put("content", texto))
         return texto
     }

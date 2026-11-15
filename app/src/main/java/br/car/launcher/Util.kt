@@ -53,5 +53,23 @@ fun Context.startPkg(pkg: String): Boolean {
 
 fun Context.instalado(pkg: String) = packageManager.getLaunchIntentForPackage(pkg) != null
 
+const val URL_PADRAO = "https://gestorvendasia.com.br/jarvis"
+const val MODELO_PADRAO = "gemini-2.5-flash-lite"
+const val VOZ_PADRAO = "Charon"
+val VOZES_JARVIS = listOf("Charon", "Orus", "Algieba", "Iapetus", "Fenrir")
+
+fun Context.srvUrl(): String = prefs().getString("srv_url", null) ?: URL_PADRAO
+fun Context.srvChave(): String = prefs().getString("srv_chave", "").orEmpty()
+fun Context.srvModelo(): String = prefs().getString("srv_modelo", "").orEmpty().ifBlank { MODELO_PADRAO }
+fun Context.vozNome(): String = prefs().getString("voz_nome", null) ?: VOZ_PADRAO
+fun Context.hotword(): Boolean = prefs().getBoolean("hotword", false)
+
+/** Base ".../v1" a partir do que o usuário digitou (com ou sem /v1, com ou sem /chat/completions). */
+fun baseV1(url: String): String {
+    var b = url.trim().trimEnd('/')
+    b = b.removeSuffix("/chat/completions")
+    return if (b.endsWith("/v1")) b else "$b/v1"
+}
+
 val NAVEGACAO = listOf("com.waze", "com.google.android.apps.maps")
 val MUSICA = listOf("com.spotify.music", "com.google.android.apps.youtube.music", "com.google.android.music")

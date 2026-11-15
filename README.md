@@ -4,9 +4,12 @@ Launcher Android para usar um tablet como central do carro, com visual de HUD e 
 
 - **Reator central**: toque e fale. Comandos do carro funcionam sem internet: "navegar para o shopping",
   "aumenta o volume", "próxima", "pausa", "ligar para 11 99999-9999", "abrir Waze", "que horas são", "bateria".
+- **Sem tocar**: em Ajustes, ligue "Acordar ao ouvir “Jarvis”". Diga "Jarvis" (ou "Jarvis, navegar para casa"). Depois de
+  uma resposta de conversa ele escuta mais uma vez, sem precisar repetir "Jarvis".
+- **Voz**: voz do Gemini pelo servidor (`/v1/audio/speech`), com tom calmo e formal; sem internet, usa a voz do Android.
 - **Conversa**: o resto vai para um servidor compatível com a API da OpenAI, como o
-  [OpenJarvis](https://github.com/open-jarvis/OpenJarvis) (`jarvis serve`). Configure em **Ajustes**: endereço,
-  chave (`OPENJARVIS_API_KEY`) e modelo.
+  [gemini-balance](https://github.com/snailyp/gemini-balance) ou o [OpenJarvis](https://github.com/open-jarvis/OpenJarvis)
+  (`jarvis serve`). Configure em **Ajustes**: endereço, chave e modelo.
 - **Módulos**: Navegar (Waze/Maps), Música, Telefone, Apps, Ajustes e Atualizações. Segure um app na lista para
   fixá-lo na doca.
 - **Atualização automática** pelas releases deste repositório.

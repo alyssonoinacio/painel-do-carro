@@ -119,7 +119,7 @@ class Modulo(c: Context, icone: Icone, rotulo: String) : LinearLayout(c) {
     }
 }
 
-enum class Estado { PARADO, OUVINDO, PENSANDO, FALANDO }
+enum class Estado { PARADO, AGUARDANDO, OUVINDO, PENSANDO, FALANDO }
 
 /**
  * O reator: botão de voz do Jarvis. Anéis concêntricos que giram em sentidos opostos;
@@ -142,7 +142,7 @@ class Reator(c: Context) : View(c) {
         val agora = SystemClock.uptimeMillis()
         val dt = if (ultimo == 0L) 0f else (agora - ultimo) / 1000f
         ultimo = agora
-        val vel = when (estado) { Estado.PARADO -> 12f; Estado.OUVINDO -> 40f; Estado.PENSANDO -> 160f; Estado.FALANDO -> 30f }
+        val vel = when (estado) { Estado.PARADO -> 12f; Estado.AGUARDANDO -> 18f; Estado.OUVINDO -> 40f; Estado.PENSANDO -> 160f; Estado.FALANDO -> 30f }
         if (!estatico) giro = (giro + vel * dt) % 360f
 
         val cx = width / 2f; val cy = height / 2f
@@ -186,7 +186,7 @@ class Reator(c: Context) : View(c) {
         p.strokeCap = Paint.Cap.BUTT
 
         if (!estatico && isShown) {
-            if (estado == Estado.PARADO) postInvalidateDelayed(50) else postInvalidateOnAnimation()
+            if (estado == Estado.PARADO || estado == Estado.AGUARDANDO) postInvalidateDelayed(50) else postInvalidateOnAnimation()
         }
     }
 

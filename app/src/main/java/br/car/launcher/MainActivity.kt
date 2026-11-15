@@ -1,17 +1,16 @@
 package br.car.launcher
 
+import android.Manifest
 import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
 import android.os.BatteryManager
 import android.os.Bundle
-import android.speech.RecognizerIntent
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -23,13 +22,9 @@ import android.widget.LinearLayout
 import android.widget.TextClock
 import android.widget.TextView
 import android.widget.Toast
-import java.util.Locale
 
 class MainActivity : Activity() {
-    private val VOZ = 7
     private lateinit var jarvis: Jarvis
-    private var tts: TextToSpeech? = null
-    private var ttsPronto = false
 
     private lateinit var reator: Reator
     private lateinit var estadoTxt: TextView
@@ -54,17 +49,6 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.statusBarColor = Hud.ABISMO; window.navigationBarColor = Hud.ABISMO
         jarvis = Jarvis(this)
-        tts = TextToSpeech(this) { st ->
-            if (st == TextToSpeech.SUCCESS) {
-                tts?.language = Locale("pt", "BR"); ttsPronto = true
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) {}
-                    override fun onDone(id: String?) { runOnUiThread { pronto() } }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(id: String?) { runOnUiThread { pronto() } }
-                })
-            }
-        }
         montar()
     }
 
@@ -182,54 +166,56 @@ class MainActivity : Activity() {
         super.onResume()
         registerReceiver(batt, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         montarDoca()
+        JarvisService.ouvinte = { e, f, fl -> atualizar(e, f, fl) }
+        atualizar(JarvisService.estado, JarvisService.frase, JarvisService.fala)
+        if (hotword()) { if (temMic()) JarvisService.enviar(this, JarvisService.INICIAR) else pedirMic() }
         Updater.verificar(this, false) { marcarAtualizacao() }
     }
 
-    override fun onPause() { super.onPause(); unregisterReceiver(batt) }
-    override fun onDestroy() { tts?.shutdown(); super.onDestroy() }
+    override fun onPause() { super.onPause(); unregisterReceiver(batt); JarvisService.ouvinte = null }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {} // launcher: Voltar não sai da tela inicial
 
-    // ---------- voz ----------
+    // ---------- voz: quem ouve e fala é o JarvisService; a tela só reflete o estado ----------
+    private val MIC = 9
+    private var ouvirAoPermitir = false
+
+    private fun temMic() = Build.VERSION.SDK_INT < 23 ||
+        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
     private fun ouvir() {
-        tts?.stop()
-        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale com o Jarvis")
-        try {
-            reator.estado = Estado.OUVINDO; estadoTxt.text = "Ouvindo…"; estadoTxt.setTextColor(Hud.AMBAR)
-            @Suppress("DEPRECATION") startActivityForResult(i, VOZ)
-        } catch (e: ActivityNotFoundException) {
-            pronto()
-            falaTxt.text = "Este tablet não tem reconhecimento de voz. Instale o app Google pela Play Store."
+        if (!temMic()) { ouvirAoPermitir = true; pedirMic(); return }
+        JarvisService.enviar(this, JarvisService.OUVIR)
+    }
+
+    private fun pedirMic() {
+        if (Build.VERSION.SDK_INT < 23) return
+        val p = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33) p.add(Manifest.permission.POST_NOTIFICATIONS)
+        requestPermissions(p.toTypedArray(), MIC)
+    }
+
+    override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, res: IntArray) {
+        super.onRequestPermissionsResult(req, perms, res)
+        if (req != MIC) return
+        if (temMic()) {
+            if (ouvirAoPermitir) JarvisService.enviar(this, JarvisService.OUVIR)
+            else if (hotword()) JarvisService.enviar(this, JarvisService.INICIAR)
+        } else falaTxt.text = "Sem o microfone eu não consigo ouvir. Permita em Ajustes do Android, em Apps, Jarvis do Carro."
+        ouvirAoPermitir = false
+    }
+
+    private fun atualizar(e: Estado, frase: String?, fala: String?) {
+        reator.estado = e
+        when (e) {
+            Estado.PARADO -> { estadoTxt.text = "Toque no círculo e fale"; estadoTxt.setTextColor(Hud.REATOR) }
+            Estado.AGUARDANDO -> { estadoTxt.text = "Diga “Jarvis” ou toque no círculo"; estadoTxt.setTextColor(Hud.REATOR) }
+            Estado.OUVINDO -> { estadoTxt.text = "Ouvindo…"; estadoTxt.setTextColor(Hud.AMBAR) }
+            Estado.PENSANDO -> { estadoTxt.text = if (frase != null) "“$frase”" else "Pensando…"; estadoTxt.setTextColor(Hud.REATOR) }
+            Estado.FALANDO -> { if (frase != null) estadoTxt.text = "“$frase”"; estadoTxt.setTextColor(Hud.REATOR) }
         }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
-        @Suppress("DEPRECATION") super.onActivityResult(req, res, data)
-        if (req != VOZ) return
-        val frase = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (res != RESULT_OK || frase.isNullOrBlank()) { pronto(); return }
-        reator.estado = Estado.PENSANDO; estadoTxt.text = "“$frase”"; estadoTxt.setTextColor(Hud.REATOR)
-        jarvis.responder(frase) { r ->
-            falaTxt.text = r.fala
-            falar(r.fala)
-            r.acao?.let { try { it() } catch (e: Exception) { falaTxt.text = "Não consegui fazer isso neste tablet." } }
-        }
-    }
-
-    private fun falar(t: String) {
-        if (!ttsPronto) { pronto(); return }
-        reator.estado = Estado.FALANDO
-        tts?.speak(t, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
-    }
-
-    private fun pronto() {
-        reator.estado = Estado.PARADO
-        estadoTxt.text = "Toque no círculo e fale"; estadoTxt.setTextColor(Hud.REATOR)
+        if (fala != null) falaTxt.text = fala
     }
 
     private fun abrir(i: Intent, erro: String) {
