@@ -31,6 +31,7 @@ class Jarvis(private val c: Context) {
     private val br = Locale("pt", "BR")
 
     fun responder(frase: String, pronto: (Resposta) -> Unit) {
+        if (perguntaFalhas(frase.semAcento())) { falhas(pronto); return }
         val local = comandoLocal(frase)
         if (local != null) { pronto(local); return }
         if (c.srvUrl().isBlank()) {
@@ -84,6 +85,7 @@ class Jarvis(private val c: Context) {
             return Resposta("São ${SimpleDateFormat("HH:mm", br).format(Date())}.")
         if (Regex("que dia|qual a data|data de hoje").containsMatchIn(f))
             return Resposta("Hoje é ${SimpleDateFormat("EEEE, d 'de' MMMM", br).format(Date())}.")
+        carro(f)?.let { return it }
         if (Regex("\\bbateria\\b").containsMatchIn(f)) {
             val b = c.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
             return Resposta("Bateria em ${b.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)} por cento.")
@@ -98,6 +100,75 @@ class Jarvis(private val c: Context) {
             else Resposta("Não encontrei o app $alvo neste tablet.")
         }
         return null
+    }
+
+    // ---------- carro: som (Bluetooth do rádio) e motor (OBD2) ----------
+    private fun carro(f: String): Resposta? {
+        if (Regex("(conecta|conectar|parear|liga|ligar)\\b.*\\b(som|radio|bluetooth|multimidia)").containsMatchIn(f))
+            return Resposta("Abri o Bluetooth. Escolha o rádio do carro na lista.") {
+                c.startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        if (Regex("(som|audio).*(carro|radio)|onde (esta|ta) o som").containsMatchIn(f) && !Regex("aument|diminu|abaix|maxim").containsMatchIn(f)) {
+            val r = SomCarro.conectado(c)
+            return Resposta(if (r != null) "O som está saindo no carro, pelo $r." else "O som está no tablet. Diga conectar no som do carro para parear.")
+        }
+        val obd = Obd.configurado(c)
+        val pedeMotor = Regex("velocidade|quantos km|rotacao|\\bgiro\\b|\\brpm\\b|temperatura do motor|motor (esta|ta) quente|temperatura da agua|arrefecimento|combustivel|gasolina|tanque|tensao|voltagem|bateria do carro").containsMatchIn(f) ||
+            (obd && Regex("\\bbateria\\b").containsMatchIn(f) && !f.contains("tablet"))
+        if (!pedeMotor) return null
+        if (!obd) return Resposta("Ainda não tenho o adaptador OBD2 do carro. Escolha-o em Ajustes, na seção Carro.")
+        val l = Obd.leitura
+        if (!Obd.conectado) return Resposta("O adaptador do carro não está conectado. Confira se a ignição está ligada.")
+        return Resposta(when {
+            Regex("velocidade|quantos km").containsMatchIn(f) ->
+                l.velocidade?.let { "Estamos a $it quilômetros por hora." } ?: "O carro não informou a velocidade."
+            Regex("rotacao|\\bgiro\\b|\\brpm\\b").containsMatchIn(f) ->
+                l.rpm?.let { "O motor está a $it rotações por minuto." } ?: "O carro não informou o giro."
+            Regex("combustivel|gasolina|tanque").containsMatchIn(f) ->
+                l.combustivel?.let { "O tanque está com $it por cento." } ?: "O HB20 não informa o nível do tanque por este adaptador, senhor."
+            Regex("tensao|voltagem|bateria").containsMatchIn(f) -> l.tensao?.let {
+                val v = String.format(br, "%.1f", it)
+                val leitura = when {
+                    (l.rpm ?: 0) > 400 && it < 13f -> "Com o motor ligado deveria passar de 13 volts. Vale checar o alternador."
+                    it >= 13.2f -> "O alternador está carregando."
+                    it >= 12.2f -> "Está normal."
+                    else -> "Está baixa, senhor."
+                }
+                "A bateria do carro está com $v volts. $leitura"
+            } ?: "O adaptador não informou a tensão."
+            else -> l.motor?.let {
+                when {
+                    it >= 105 -> "O motor está a $it graus. Acima do normal, senhor. Se subir mais, pare em local seguro."
+                    it < 70 -> "O motor está a $it graus, ainda esquentando."
+                    else -> "O motor está a $it graus, temperatura normal."
+                }
+            } ?: "O carro não informou a temperatura do motor."
+        })
+    }
+
+    private fun perguntaFalhas(f: String) =
+        Regex("falha|defeito|luz (da injecao|do motor)|injecao eletronica|check engine|codigo de erro|diagnostico do carro|scanner").containsMatchIn(f)
+
+    /** Lê os códigos de falha; com servidor, pede à IA uma explicação curta de cada um. */
+    private fun falhas(pronto: (Resposta) -> Unit) {
+        if (!Obd.configurado(c)) { pronto(Resposta("Ainda não tenho o adaptador OBD2 do carro. Escolha-o em Ajustes, na seção Carro.")); return }
+        Obd.falhas { lista ->
+            when {
+                lista == null -> pronto(Resposta("O adaptador do carro não está conectado. Confira se a ignição está ligada."))
+                lista.isEmpty() -> pronto(Resposta("Nenhuma falha registrada na injeção, senhor."))
+                else -> {
+                    val codigos = lista.joinToString(", ")
+                    val base = if (lista.size == 1) "Encontrei uma falha: $codigos." else "Encontrei ${lista.size} falhas: $codigos."
+                    if (c.srvUrl().isBlank()) { pronto(Resposta(base)); return@falhas }
+                    thread {
+                        val exp = try {
+                            perguntar("Explique em no máximo duas frases curtas, para o motorista, o que significa o código OBD2 " +
+                                "$codigos num Hyundai HB20 2013 e se é seguro continuar dirigindo.")
+                        } catch (e: Exception) { "" }
+                        main.post { pronto(Resposta("$base $exp".trim(), conversa = exp.isNotBlank())) }
+                    }
+                }
+            }
+        }
     }
 
     /**

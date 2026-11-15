@@ -195,3 +195,39 @@ class Reator(c: Context) : View(c) {
         if (visibility == VISIBLE) { ultimo = 0L; invalidate() }
     }
 }
+
+/** Faixa de telemetria do motor (OBD2): velocidade, motor, bateria e giro. */
+class Telemetria(c: Context) : LinearLayout(c) {
+    private class Celula(val valor: TextView, val rotulo: TextView)
+    private val celulas = mutableListOf<Celula>()
+
+    init {
+        gravity = Gravity.CENTER_VERTICAL
+        background = Chanfro(c.dpf(10f), c.dpf(1f), 0x553FE0FF, 0x660B1A2A)
+        setPadding(c.dp(6), c.dp(6), c.dp(6), c.dp(6))
+        listOf("km/h", "motor °C", "bateria V", "giro").forEachIndexed { i, r ->
+            if (i > 0) addView(View(c).apply { setBackgroundColor(0x443FE0FF) }, LayoutParams(c.dp(1), c.dp(36)))
+            val col = LinearLayout(c).apply { orientation = VERTICAL; gravity = Gravity.CENTER }
+            val v = TextView(c).apply {
+                typeface = Hud.forte(c); setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f); setTextColor(Hud.GELO)
+                includeFontPadding = false; text = "–"
+            }
+            val l = TextView(c).apply { typeface = Hud.medio(c); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setTextColor(Hud.ACO); text = r }
+            col.addView(v); col.addView(l)
+            addView(col, LayoutParams(0, -2, 1f))
+            celulas.add(Celula(v, l))
+        }
+    }
+
+    fun mostrar(l: Leitura?, status: String) {
+        fun pinta(i: Int, t: String?, alerta: Boolean) {
+            celulas[i].valor.text = t ?: "–"
+            celulas[i].valor.setTextColor(if (alerta) Hud.AMBAR else if (t == null) Hud.ACO else Hud.GELO)
+        }
+        pinta(0, l?.velocidade?.toString(), false)
+        pinta(1, l?.motor?.toString(), (l?.motor ?: 0) >= 105)
+        pinta(2, l?.tensao?.let { String.format(java.util.Locale("pt", "BR"), "%.1f", it) }, (l?.tensao ?: 13f) < 12f)
+        pinta(3, l?.rpm?.toString(), false)
+        contentDescription = if (l == null) "Carro: $status" else "Telemetria do carro"
+    }
+}

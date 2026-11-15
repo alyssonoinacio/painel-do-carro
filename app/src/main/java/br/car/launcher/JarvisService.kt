@@ -73,12 +73,52 @@ class JarvisService : Service() {
     private var modo = Modo.DESLIGADO
     private var falhas = 0
     private var silenciado = false
+    private var ultimoAlerta = 0L
+
+    /** Avisa por voz se o motor esquentar ou se o alternador parar de carregar (só quando o Jarvis está livre). */
+    private val alertaMotor: (Leitura?) -> Unit = { l ->
+        val agora = System.currentTimeMillis()
+        if (l != null && modo == Modo.ESPERA && agora - ultimoAlerta > 10 * 60_000L) {
+            val aviso = when {
+                (l.motor ?: 0) >= 108 -> "Atenção, senhor: o motor está a ${l.motor} graus. Se continuar subindo, pare em local seguro."
+                (l.rpm ?: 0) > 600 && (l.tensao ?: 14f) < 12.4f -> "Atenção, senhor: a bateria está com ${String.format(java.util.Locale("pt", "BR"), "%.1f", l.tensao)} volts com o motor ligado. O alternador pode não estar carregando."
+                else -> null
+            }
+            if (aviso != null) { ultimoAlerta = agora; log("alerta do motor"); anunciar(aviso) }
+        }
+    }
+
+    private val somCarro by lazy {
+        if (Build.VERSION.SDK_INT >= 23) object : android.media.AudioDeviceCallback() {
+            private var antes = SomCarro.conectado(this@JarvisService) != null
+            override fun onAudioDevicesAdded(d: Array<out android.media.AudioDeviceInfo>?) {
+                val agora = SomCarro.conectado(this@JarvisService) != null
+                if (agora && !antes) { log("som do carro conectado"); h.postDelayed({ anunciar("Conectado ao som do carro, senhor.") }, 1500) }
+                antes = agora
+            }
+            override fun onAudioDevicesRemoved(d: Array<out android.media.AudioDeviceInfo>?) {
+                antes = SomCarro.conectado(this@JarvisService) != null
+            }
+        } else null
+    }
+
+    /** Fala sem ter sido chamado; só se ninguém estiver falando com o Jarvis. */
+    private fun anunciar(t: String) {
+        if (modo != Modo.ESPERA) return
+        modo = Modo.OCUPADO
+        rec?.cancel()
+        publicar(Estado.FALANDO, null, t)
+        voz.falar(t) { voltar() }
+    }
 
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         rodando = true; log("serviço iniciado")
+        Obd.ouvintes.add(alertaMotor); Obd.usar(this, "voz")
+        if (Build.VERSION.SDK_INT >= 23) (getSystemService(AUDIO_SERVICE) as AudioManager)
+            .registerAudioDeviceCallback(somCarro as android.media.AudioDeviceCallback, h)
         jarvis = Jarvis(this); voz = Voz(this)
         if (Build.VERSION.SDK_INT >= 26) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
@@ -270,6 +310,9 @@ class JarvisService : Service() {
 
     override fun onDestroy() {
         rodando = false; log("serviço parado")
+        Obd.ouvintes.remove(alertaMotor); Obd.soltar("voz")
+        if (Build.VERSION.SDK_INT >= 23) (getSystemService(AUDIO_SERVICE) as AudioManager)
+            .unregisterAudioDeviceCallback(somCarro as android.media.AudioDeviceCallback)
         modo = Modo.DESLIGADO
         h.removeCallbacksAndMessages(null)
         silenciar(false)

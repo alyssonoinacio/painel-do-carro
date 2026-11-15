@@ -10,6 +10,11 @@ Launcher Android para usar um tablet como central do carro, com visual de HUD e 
 - **Conversa**: o resto vai para um servidor compatível com a API da OpenAI, como o
   [gemini-balance](https://github.com/snailyp/gemini-balance) ou o [OpenJarvis](https://github.com/open-jarvis/OpenJarvis)
   (`jarvis serve`). Configure em **Ajustes**: endereço, chave e modelo.
+- **Som do carro (HB20)**: o áudio sai pelo Bluetooth do rádio; a tela mostra se está "no carro" e o Jarvis avisa ao
+  conectar. "Jarvis, conectar no som do carro" abre o pareamento.
+- **Motor (OBD2 ELM327 Bluetooth)**: velocidade, temperatura do motor, bateria e giro na tela; "Jarvis, temperatura do
+  motor", "bateria do carro", "tem alguma falha?" (lê os códigos e a IA explica). Só leitura; alerta de motor quente e
+  de alternador. Escolha o adaptador em Ajustes, Carro.
 - **Módulos**: Navegar (Waze/Maps), Música, Telefone, Apps, Ajustes e Atualizações. Segure um app na lista para
   fixá-lo na doca.
 - **Atualização automática** pelas releases deste repositório.

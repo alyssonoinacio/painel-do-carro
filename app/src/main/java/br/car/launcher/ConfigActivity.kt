@@ -30,9 +30,20 @@ class ConfigActivity : Activity() {
     private lateinit var modelo: EditText
     private var voz: Voz? = null
     private lateinit var diag: TextView
+    private lateinit var somStatus: TextView
+    private lateinit var obdStatus: TextView
     private val relogio = android.os.Handler(android.os.Looper.getMainLooper())
     private val atualizarDiag = object : Runnable {
-        override fun run() { diag.text = diagnostico(); relogio.postDelayed(this, 2000) }
+        override fun run() {
+            diag.text = diagnostico()
+            val som = SomCarro.conectado(this@ConfigActivity)
+            somStatus.text = if (som != null) "Som: saindo no carro ($som)" else "Som: saindo no tablet"
+            somStatus.setTextColor(if (som != null) Hud.REATOR else Hud.ACO)
+            val nome = prefs().getString("obd_nome", "").orEmpty()
+            obdStatus.text = if (!Obd.configurado(this@ConfigActivity)) "Nenhum adaptador escolhido."
+                else "$nome: " + (if (!Obd.permitido(this@ConfigActivity)) "permita o Bluetooth" else Obd.status)
+            relogio.postDelayed(this, 2000)
+        }
     }
 
     override fun onCreate(b: Bundle?) {
@@ -58,6 +69,19 @@ class ConfigActivity : Activity() {
         col.addView(botao("Permitir abrir apps por voz com outro app na frente") {
             if (Build.VERSION.SDK_INT >= 23) startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }, LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(10) })
+
+        // --- carro: som pelo Bluetooth do rádio e adaptador OBD2
+        secao(col, "Carro")
+        somStatus = texto("", 17f, Hud.ACO, false)
+        col.addView(somStatus)
+        col.addView(botao("Parear com o rádio do carro") { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
+            LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(8) })
+        col.addView(texto("Adaptador OBD2 (ELM327): pareie primeiro no Bluetooth do tablet, com a ignição ligada. " +
+            "A senha costuma ser 1234 ou 0000.", 15f, Hud.ACO, false).apply { setPadding(0, dp(14), 0, 0) })
+        obdStatus = texto("", 17f, Hud.GELO, false).apply { setPadding(0, dp(6), 0, 0) }
+        col.addView(obdStatus)
+        col.addView(botao("Escolher adaptador OBD2") { escolherObd() },
+            LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(8) })
 
         // --- voz
         secao(col, "Voz")
@@ -113,8 +137,36 @@ class ConfigActivity : Activity() {
         setContentView(ScrollView(this).apply { setBackgroundColor(Hud.ABISMO); addView(col) })
     }
 
+    /** Lista os aparelhos pareados para escolher o ELM327. */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun escolherObd() {
+        if (!Obd.permitido(this)) { requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 2); return }
+        @Suppress("DEPRECATION") val ad = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+        if (ad == null || !ad.isEnabled) {
+            status.text = "Ligue o Bluetooth do tablet e pareie o adaptador antes."; status.setTextColor(Hud.AMBAR)
+            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)); return
+        }
+        val pareados = ad.bondedDevices.sortedByDescending {
+            (it.name ?: "").uppercase().let { n -> n.contains("OBD") || n.contains("ELM") || n.contains("LINK") || n.contains("V-") }
+        }
+        if (pareados.isEmpty()) {
+            status.text = "Nenhum aparelho pareado. Pareie o adaptador OBD2 no Bluetooth do tablet."; status.setTextColor(Hud.AMBAR)
+            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)); return
+        }
+        val nomes = pareados.map { "${it.name ?: "Sem nome"}  (${it.address})" }.toMutableList()
+        if (Obd.configurado(this)) nomes.add("Não usar adaptador OBD2")
+        android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Adaptador OBD2")
+            .setItems(nomes.toTypedArray()) { _, i ->
+                if (i >= pareados.size) prefs().edit().remove("obd_mac").remove("obd_nome").apply()
+                else prefs().edit().putString("obd_mac", pareados[i].address).putString("obd_nome", pareados[i].name ?: "OBD2").apply()
+                Obd.reiniciar(this)
+            }.show()
+    }
+
     override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, res: IntArray) {
         super.onRequestPermissionsResult(req, perms, res)
+        if (req == 2) { if (res.firstOrNull() == PackageManager.PERMISSION_GRANTED) escolherObd(); return }
         if (res.firstOrNull() == PackageManager.PERMISSION_GRANTED) JarvisService.enviar(this, JarvisService.INICIAR)
         else { status.text = "Sem o microfone o Jarvis não ouve. Permita para usar a ativação por voz."; status.setTextColor(Hud.AMBAR) }
     }
@@ -136,6 +188,8 @@ class ConfigActivity : Activity() {
             "Acordar com “Jarvis”: " + (if (hotword()) "ligado" else "desligado"),
             "Escuta rodando: " + (if (JarvisService.rodando) "sim" else "não"),
             "Abrir apps por voz: " + (if (sobrepor) "permitido" else "não permitido"),
+            "Som do carro: " + (SomCarro.conectado(this) ?: "não conectado"),
+            "OBD2: " + (if (Obd.configurado(this)) Obd.status else "não configurado"),
             "Versão: " + packageManager.getPackageInfo(packageName, 0).versionName,
             "", "Últimos eventos:")
         synchronized(JarvisService.diag) { linhas.addAll(JarvisService.diag.take(12)) }

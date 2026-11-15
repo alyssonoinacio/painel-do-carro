@@ -33,6 +33,15 @@ class MainActivity : Activity() {
     private lateinit var modAtualizar: Modulo
     private lateinit var doca: LinearLayout
     private var ultimaFala: CharSequence = ""
+    private lateinit var somTxt: TextView
+    private lateinit var telemetria: Telemetria
+    private val obdOuvinte: (Leitura?) -> Unit = { l -> telemetria.mostrar(l, Obd.status) }
+    private val somCallback by lazy {
+        if (Build.VERSION.SDK_INT >= 23) object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(d: Array<out android.media.AudioDeviceInfo>?) = mostrarSom()
+            override fun onAudioDevicesRemoved(d: Array<out android.media.AudioDeviceInfo>?) = mostrarSom()
+        } else null
+    }
 
     private val batt = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
@@ -83,6 +92,8 @@ class MainActivity : Activity() {
         })
         bateria = TextView(this).apply { typeface = Hud.medio(this@MainActivity); setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f); setTextColor(Hud.ACO) }
         lado.addView(bateria)
+        somTxt = TextView(this).apply { typeface = Hud.medio(this@MainActivity); setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f); setTextColor(Hud.ACO) }
+        lado.addView(somTxt)
         topo.addView(lado)
         nucleo.addView(topo, LinearLayout.LayoutParams(-1, -2))
 
@@ -101,8 +112,12 @@ class MainActivity : Activity() {
         }
         nucleo.addView(falaTxt, LinearLayout.LayoutParams(-1, -2))
 
-        // painel de módulos
+        // painel de módulos (com a telemetria do motor em cima, se houver adaptador OBD2)
         val painel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        telemetria = Telemetria(this)
+        telemetria.mostrar(if (Obd.conectado) Obd.leitura else null, Obd.status)
+        telemetria.visibility = if (Obd.configurado(this)) View.VISIBLE else View.GONE
+        painel.addView(telemetria, LinearLayout.LayoutParams(-1, -2))
         val cols = if (paisagem) 2 else 3
         val mods = listOf(
             Modulo(this, Icone.NAVEGAR, "Navegar").apply { setOnClickListener { jarvis.navegar(null) } },
@@ -134,7 +149,13 @@ class MainActivity : Activity() {
             raiz.addView(painel, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
         }
         setContentView(raiz)
-        marcarAtualizacao(); montarDoca()
+        marcarAtualizacao(); montarDoca(); mostrarSom()
+    }
+
+    private fun mostrarSom() {
+        val r = SomCarro.conectado(this)
+        somTxt.text = if (r != null) "Som no carro · $r" else "Som no tablet"
+        somTxt.setTextColor(if (r != null) Hud.REATOR else Hud.ACO)
     }
 
     /** Apps fixados (segurar na lista de apps) ficam numa doca de ícones abaixo dos módulos. */
@@ -166,13 +187,22 @@ class MainActivity : Activity() {
         super.onResume()
         registerReceiver(batt, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         montarDoca()
+        telemetria.visibility = if (Obd.configurado(this)) View.VISIBLE else View.GONE
+        Obd.ouvintes.add(obdOuvinte); Obd.usar(this, "tela")
+        if (Build.VERSION.SDK_INT >= 23) (getSystemService(AUDIO_SERVICE) as android.media.AudioManager)
+            .registerAudioDeviceCallback(somCallback as android.media.AudioDeviceCallback, null)
+        mostrarSom()
         JarvisService.ouvinte = { e, f, fl -> atualizar(e, f, fl) }
         atualizar(JarvisService.estado, JarvisService.frase, JarvisService.fala)
         if (hotword()) { if (temMic()) JarvisService.enviar(this, JarvisService.INICIAR) else pedirMic() }
         Updater.verificar(this, false) { marcarAtualizacao() }
     }
 
-    override fun onPause() { super.onPause(); unregisterReceiver(batt); JarvisService.ouvinte = null }
+    override fun onPause() { super.onPause(); unregisterReceiver(batt); JarvisService.ouvinte = null
+        Obd.ouvintes.remove(obdOuvinte); Obd.soltar("tela")
+        if (Build.VERSION.SDK_INT >= 23) (getSystemService(AUDIO_SERVICE) as android.media.AudioManager)
+            .unregisterAudioDeviceCallback(somCallback as android.media.AudioDeviceCallback)
+    }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {} // launcher: Voltar não sai da tela inicial
